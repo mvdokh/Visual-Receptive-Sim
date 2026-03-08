@@ -1,0 +1,7 @@
+/Users/martindokholyan/Desktop/Visual-Receptive-Sim/target/debug/deps/foreign_types-ca57d64faa8342b2.d: /Users/martindokholyan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/foreign-types-0.5.0/src/lib.rs
+
+/Users/martindokholyan/Desktop/Visual-Receptive-Sim/target/debug/deps/libforeign_types-ca57d64faa8342b2.rlib: /Users/martindokholyan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/foreign-types-0.5.0/src/lib.rs
+
+/Users/martindokholyan/Desktop/Visual-Receptive-Sim/target/debug/deps/libforeign_types-ca57d64faa8342b2.rmeta: /Users/martindokholyan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/foreign-types-0.5.0/src/lib.rs
+
+/Users/martindokholyan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/foreign-types-0.5.0/src/lib.rs:

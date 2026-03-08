@@ -1,0 +1,10 @@
+/Users/martindokholyan/Desktop/Visual-Receptive-Sim/target/debug/deps/csscolorparser-e03d389b1105a4a7.d: /Users/martindokholyan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/csscolorparser-0.6.2/src/lib.rs /Users/martindokholyan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/csscolorparser-0.6.2/src/color.rs /Users/martindokholyan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/csscolorparser-0.6.2/src/parser/mod.rs /Users/martindokholyan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/csscolorparser-0.6.2/src/parser/named_colors.rs
+
+/Users/martindokholyan/Desktop/Visual-Receptive-Sim/target/debug/deps/libcsscolorparser-e03d389b1105a4a7.rlib: /Users/martindokholyan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/csscolorparser-0.6.2/src/lib.rs /Users/martindokholyan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/csscolorparser-0.6.2/src/color.rs /Users/martindokholyan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/csscolorparser-0.6.2/src/parser/mod.rs /Users/martindokholyan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/csscolorparser-0.6.2/src/parser/named_colors.rs
+
+/Users/martindokholyan/Desktop/Visual-Receptive-Sim/target/debug/deps/libcsscolorparser-e03d389b1105a4a7.rmeta: /Users/martindokholyan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/csscolorparser-0.6.2/src/lib.rs /Users/martindokholyan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/csscolorparser-0.6.2/src/color.rs /Users/martindokholyan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/csscolorparser-0.6.2/src/parser/mod.rs /Users/martindokholyan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/csscolorparser-0.6.2/src/parser/named_colors.rs
+
+/Users/martindokholyan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/csscolorparser-0.6.2/src/lib.rs:
+/Users/martindokholyan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/csscolorparser-0.6.2/src/color.rs:
+/Users/martindokholyan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/csscolorparser-0.6.2/src/parser/mod.rs:
+/Users/martindokholyan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/csscolorparser-0.6.2/src/parser/named_colors.rs:
