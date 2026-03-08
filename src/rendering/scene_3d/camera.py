@@ -7,15 +7,48 @@ from dataclasses import dataclass, field
 import numpy as np
 
 
+ELEVATION_MAX = 1.483  # ~85 deg, avoid flipping
+
 @dataclass
 class OrbitCamera:
-    """Orbit camera: target, distance, azimuth, elevation."""
+    """Orbit camera: target, distance, azimuth, elevation. Supports damped motion."""
 
     target: np.ndarray = field(default_factory=lambda: np.array([0.0, 0.0, 3.0], dtype=np.float32))
     distance: float = 4.0
     azimuth: float = 0.4  # radians
     elevation: float = 0.5  # radians
     fov: float = 45.0  # degrees
+    # Damped velocity for smooth camera inertia
+    _azimuth_vel: float = 0.0
+    _elevation_vel: float = 0.0
+    _distance_vel: float = 0.0
+    _damping: float = 0.85  # per-frame decay
+
+    def apply_damping(self, dt: float) -> None:
+        """Apply damping to camera velocity."""
+        decay = self._damping ** (dt * 60)
+        self._azimuth_vel *= decay
+        self._elevation_vel *= decay
+        self._distance_vel *= decay
+
+    def integrate(self, dt: float) -> None:
+        """Integrate velocity into azimuth, elevation, distance."""
+        self.azimuth += self._azimuth_vel * dt
+        self.elevation = max(-ELEVATION_MAX, min(ELEVATION_MAX, self.elevation + self._elevation_vel * dt))
+        self.distance = max(2.0, min(12.0, self.distance + self._distance_vel * dt))
+        self.apply_damping(dt)
+
+    def set_preset(self, name: str) -> None:
+        """Apply a camera preset: top, side, iso."""
+        self._azimuth_vel = 0.0
+        self._elevation_vel = 0.0
+        self._distance_vel = 0.0
+        if name == "top":
+            self.azimuth, self.elevation, self.distance = 0.0, ELEVATION_MAX, 5.0
+        elif name == "side":
+            self.azimuth, self.elevation, self.distance = 0.0, 0.0, 5.0
+        elif name == "iso":
+            self.azimuth, self.elevation, self.distance = 0.785, 0.5, 5.0
 
     def eye_position(self) -> np.ndarray:
         """Camera position in world space."""

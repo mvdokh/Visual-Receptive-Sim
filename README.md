@@ -1,5 +1,7 @@
 # RGC Circuit Simulator
 
+![RGC circuit simulator UI](Screenshot 2026-03-08 at 12.18.39 PM.png)
+
 Retinal ganglion cell circuit simulator: stimulus → cones → horizontals → bipolars → amacrines → RGCs. Vectorized NumPy/SciPy pipeline, ModernGL 3D rendering, Dear PyGui.
 
 ## Quick Start
@@ -16,7 +18,7 @@ python main.py
 - **Simulation**: L/M/S cone spectral response, horizontal surround feedback, ON/OFF bipolar split, amacrine lateral inhibition, LN RGC nonlinearity. Grid-based, vectorized.
 - **Stimuli**: Spot, full-field, annulus, bar, grating, checkerboard. Monochromatic via cone fundamentals (Stockman & Sharpe 2000).
 - **Visualization**: 2D heatmap per layer or 3D stack (planes + cell spheres). Mouse orbit, scroll zoom.
-- **RF probe**: 24×24 sweep, DoG fit (σ_center, σ_surround, ratio).
+- **RF probe**: 24x24 sweep, DoG fit (sigma_center, sigma_surround, ratio).
 - **Export**: PNG screenshot, CSV stats, NPY layer grids.
 
 ## Stack

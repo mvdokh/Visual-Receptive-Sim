@@ -15,6 +15,7 @@ import moderngl
 import numpy as np
 
 from src.config import GlobalConfig, layer_z_positions
+from src.rendering.heatmap import spectrum_to_stimulus_rgba
 from src.rendering.scene_3d.camera import OrbitCamera
 from src.rendering.scene_3d.cell_spheres import CellSpheresRenderer
 from src.rendering.scene_3d.layer_planes import LayerPlane
@@ -83,11 +84,15 @@ class RenderContext:
     def update_from_state(self, state: SimState) -> None:
         """Propagate new activation grids into GPU textures."""
         self.ensure_scene(state)
-        # Map state attributes back into named planes.
-        mapping = {
-            "Stimulus": np.sum(state.stimulus_spectrum, axis=-1)
+        cfg = state.config
+        wl = cfg.spectral.wavelengths if cfg else np.arange(380, 701, 5, dtype=np.float32)
+        stim_rgba = (
+            spectrum_to_stimulus_rgba(state.stimulus_spectrum, wl)
             if state.stimulus_spectrum is not None
-            else np.zeros(state.grid_shape(), dtype=np.float32),
+            else np.zeros((*state.grid_shape(), 4), dtype=np.float32)
+        )
+        mapping = {
+            "Stimulus": stim_rgba,
             "Cones": state.cone_L,
             "Horizontal": state.h_activation,
             "Bipolar": state.bp_diffuse_on,

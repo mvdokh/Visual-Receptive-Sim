@@ -97,13 +97,16 @@ class LayerPlane:
         self._texture.build_mipmaps()
 
     def update_from_grid(self, grid: np.ndarray) -> None:
-        """Update the backing texture from a new activation grid."""
-        self.grid = grid.astype(np.float32)
+        """Update the backing texture. Accepts (H,W) or (H,W,4) RGBA."""
+        if grid.ndim == 3 and grid.shape[2] == 4:
+            rgba = np.ascontiguousarray(grid.astype(np.float32))
+        else:
+            self.grid = grid.astype(np.float32)
+            rgba = grid_to_rgba(self.grid, self.colormap)
         if self._texture is None:
             return
-        h, w = self.grid.shape
-        rgba = grid_to_rgba(self.grid, self.colormap)
-        tex_data = (rgba * 255.0).astype("u1")
+        h, w = rgba.shape[:2]
+        tex_data = (np.clip(rgba, 0, 1) * 255.0).astype("u1")
         if self._texture.size != (w, h):
             self._texture.release()
             self._texture = self.ctx.texture((w, h), 4, data=tex_data.tobytes())
@@ -129,20 +132,29 @@ class LayerPlane:
                 in vec2 in_uv;
                 uniform mat4 u_mvp;
                 out vec2 v_uv;
+                out float v_depth;
                 void main() {
                     v_uv = in_uv;
-                    gl_Position = u_mvp * vec4(in_pos, 1.0);
+                    vec4 clip = u_mvp * vec4(in_pos, 1.0);
+                    v_depth = clip.z / clip.w;
+                    gl_Position = clip;
                 }
             """,
             fragment_shader="""
                 #version 330
                 uniform sampler2D u_tex;
                 uniform float u_opacity;
+                uniform float u_fog_start;  // NDC depth where fog begins (~0.3)
+                uniform float u_fog_end;    // NDC depth where fog is full (~0.9)
                 in vec2 v_uv;
+                in float v_depth;
                 out vec4 fragColor;
                 void main() {
                     vec4 c = texture(u_tex, v_uv);
-                    fragColor = vec4(c.rgb, c.a * u_opacity);
+                    float fog = clamp((v_depth - u_fog_start) / (u_fog_end - u_fog_start), 0.0, 1.0);
+                    vec3 fogColor = vec3(0.02, 0.02, 0.04);
+                    vec3 rgb = mix(c.rgb, fogColor, fog);
+                    fragColor = vec4(rgb, c.a * u_opacity);
                 }
             """,
         )
@@ -159,16 +171,19 @@ class LayerPlane:
         self._texture.use(location=0)
         self._vao.render(mode=moderngl.TRIANGLE_STRIP)
 
-    def draw_3d(self, mvp: np.ndarray) -> None:
-        """3D draw with MVP matrix (for 3D stack view)."""
+    def draw_3d(self, mvp: np.ndarray, fog_start: float = 0.3, fog_end: float = 0.9) -> None:
+        """3D draw with MVP matrix (for 3D stack view). Z-based fog for depth."""
         if not self.visible:
             return
         self.ensure_gpu_resources()
         self._ensure_3d_resources()
         assert self._vao_3d is not None
-        self._vao_3d.program["u_mvp"].write(mvp.T.tobytes())
-        self._vao_3d.program["u_opacity"].value = self.opacity
-        self._vao_3d.program["u_tex"].value = 0
+        prog = self._vao_3d.program
+        prog["u_mvp"].write(mvp.T.tobytes())
+        prog["u_opacity"].value = self.opacity
+        prog["u_fog_start"].value = fog_start
+        prog["u_fog_end"].value = fog_end
+        prog["u_tex"].value = 0
         self._texture.use(location=0)
         self._vao_3d.render(mode=moderngl.TRIANGLE_STRIP)
 
