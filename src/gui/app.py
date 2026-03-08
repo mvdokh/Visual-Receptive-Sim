@@ -45,35 +45,83 @@ DATA_EXPORTS_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "exp
 _shared: dict = {}
 
 
-def _update_stimulus_visibility(stim_type: str) -> None:
-    """Show/hide stimulus controls based on type."""
-    def show(tag: str): dpg.show_item(tag) if dpg.does_item_exist(tag) else None
-    def hide(tag: str): dpg.hide_item(tag) if dpg.does_item_exist(tag) else None
-    # Default: hide all advanced, show radius
-    for t in ("stim_x_deg", "stim_y_deg", "stim_orientation", "stim_width",
-              "stim_spatial_freq", "stim_phase", "stim_inner_radius"):
+def _update_stimulus_visibility(stim_type: str, state: SimState | None = None) -> None:
+    """Show/hide stimulus controls based on type so only relevant sliders are visible."""
+    state = state or _shared.get("state")
+
+    def show(tag: str) -> None:
+        if dpg.does_item_exist(tag):
+            dpg.show_item(tag)
+
+    def hide(tag: str) -> None:
+        if dpg.does_item_exist(tag):
+            dpg.hide_item(tag)
+
+    # When switching to moving stimuli, set default velocity so they actually move
+    if state and stim_type in ("moving_spot", "moving_bar", "moving_grating"):
+        state.stimulus_params.setdefault("vx_deg_s", 0.5)
+        state.stimulus_params.setdefault("vy_deg_s", 0.0)
+        if dpg.does_item_exist("stim_vx"):
+            dpg.set_value("stim_vx", state.stimulus_params["vx_deg_s"])
+        if dpg.does_item_exist("stim_vy"):
+            dpg.set_value("stim_vy", state.stimulus_params["vy_deg_s"])
+
+    advanced_tags = [
+        "stim_x_deg",
+        "stim_y_deg",
+        "stim_orientation",
+        "stim_width",
+        "stim_spatial_freq",
+        "stim_phase",
+        "stim_inner_radius",
+        "stim_vx",
+        "stim_vy",
+        "stim_radius2",
+        "stim_x2_deg",
+        "stim_y2_deg",
+        "stim_wavelength2",
+        "stim_intensity2",
+    ]
+    # Hide everything first
+    hide("stim_radius")
+    for t in advanced_tags:
         hide(t)
-    show("stim_radius")
-    if stim_type == "full_field":
-        hide("stim_radius")
-    elif stim_type == "spot":
-        show("stim_x_deg")
-        show("stim_y_deg")
-    elif stim_type == "annulus":
-        show("stim_x_deg")
-        show("stim_y_deg")
-        show("stim_inner_radius")
-    elif stim_type == "bar":
-        show("stim_x_deg")
-        show("stim_y_deg")
-        show("stim_orientation")
-        show("stim_width")
-    elif stim_type in ("grating", "checkerboard"):
-        show("stim_x_deg")
-        show("stim_y_deg")
-        show("stim_orientation")
-        show("stim_spatial_freq")
-        show("stim_phase")
+
+    # Mapping from stimulus type to the controls that make sense
+    show_map = {
+        "full_field": [],
+        "spot": ["stim_radius", "stim_x_deg", "stim_y_deg"],
+        "annulus": ["stim_radius", "stim_x_deg", "stim_y_deg", "stim_inner_radius"],
+        "bar": ["stim_x_deg", "stim_y_deg", "stim_orientation", "stim_width"],
+        "grating": ["stim_x_deg", "stim_y_deg", "stim_orientation", "stim_spatial_freq", "stim_phase"],
+        "checkerboard": ["stim_x_deg", "stim_y_deg", "stim_width"],
+        "moving_spot": ["stim_radius", "stim_x_deg", "stim_y_deg", "stim_vx", "stim_vy"],
+        "moving_bar": ["stim_x_deg", "stim_y_deg", "stim_orientation", "stim_width", "stim_vx", "stim_vy"],
+        "moving_grating": ["stim_x_deg", "stim_y_deg", "stim_orientation", "stim_spatial_freq", "stim_phase", "stim_vx", "stim_vy"],
+        "dual_spot": [
+            "stim_radius",
+            "stim_x_deg",
+            "stim_y_deg",
+            "stim_radius2",
+            "stim_x2_deg",
+            "stim_y2_deg",
+            "stim_wavelength2",
+            "stim_intensity2",
+        ],
+    }
+    tags_to_show = show_map.get(stim_type, show_map["spot"])
+    for tag in tags_to_show:
+        show(tag)
+
+
+def _update_view_mode_ui(mode: str) -> None:
+    """Show 3D-only controls only when 3D view is active."""
+    is_3d = mode == "3D Stack"
+    if dpg.does_item_exist("camera_3d_node"):
+        if is_3d:
+            dpg.show_item("camera_3d_node")
+        else:
+            dpg.hide_item("camera_3d_node")
 
 
 def _reset_camera(preset: str) -> None:
@@ -112,6 +160,7 @@ def _build_left_panel(state: SimState) -> None:
             items=["2D Heatmap", "3D Stack"],
             default_value="2D Heatmap",
             tag="view_mode_combo",
+            callback=lambda s, a: _update_view_mode_ui(a),
         )
         dpg.add_combo(
             label="Layer",
@@ -133,10 +182,21 @@ def _build_left_panel(state: SimState) -> None:
         with dpg.tree_node(label="Stimulus", default_open=True):
             dpg.add_combo(
                 label="Type",
-                items=["spot", "full_field", "annulus", "bar", "grating", "checkerboard"],
+                items=[
+                    "spot",
+                    "full_field",
+                    "annulus",
+                    "bar",
+                    "grating",
+                    "checkerboard",
+                    "moving_spot",
+                    "moving_bar",
+                    "moving_grating",
+                    "dual_spot",
+                ],
                 default_value="spot",
                 tag="stimulus_type_combo",
-                callback=lambda s, a: (_update_stimulus_visibility(a), state.stimulus_params.update({"type": a})),
+                callback=lambda s, a: (_update_stimulus_visibility(a, state), state.stimulus_params.update({"type": a})),
             )
             dpg.add_slider_float(
                 label="Wavelength (nm)",
@@ -175,6 +235,20 @@ def _build_left_panel(state: SimState) -> None:
                     tag="stim_phase", callback=lambda s, a: state.stimulus_params.update({"phase_deg": a}))
                 dpg.add_slider_float(label="Inner radius (deg)", min_value=0.01, max_value=0.3, default_value=0.05,
                     tag="stim_inner_radius", callback=lambda s, a: state.stimulus_params.update({"inner_radius_deg": a}))
+                dpg.add_slider_float(label="Velocity X (deg/s)", min_value=-2.0, max_value=2.0, default_value=0.0,
+                    tag="stim_vx", callback=lambda s, a: state.stimulus_params.update({"vx_deg_s": a}))
+                dpg.add_slider_float(label="Velocity Y (deg/s)", min_value=-2.0, max_value=2.0, default_value=0.0,
+                    tag="stim_vy", callback=lambda s, a: state.stimulus_params.update({"vy_deg_s": a}))
+                dpg.add_slider_float(label="Secondary radius (deg)", min_value=0.02, max_value=0.5, default_value=0.15,
+                    tag="stim_radius2", callback=lambda s, a: state.stimulus_params.update({"radius2_deg": a}))
+                dpg.add_slider_float(label="Secondary X (deg)", min_value=-0.5, max_value=0.5, default_value=0.25,
+                    tag="stim_x2_deg", callback=lambda s, a: state.stimulus_params.update({"x2_deg": a}))
+                dpg.add_slider_float(label="Secondary Y (deg)", min_value=-0.5, max_value=0.5, default_value=0.0,
+                    tag="stim_y2_deg", callback=lambda s, a: state.stimulus_params.update({"y2_deg": a}))
+                dpg.add_slider_float(label="Secondary wavelength (nm)", min_value=380, max_value=700, default_value=450,
+                    tag="stim_wavelength2", callback=lambda s, a: state.stimulus_params.update({"wavelength2_nm": a}))
+                dpg.add_slider_float(label="Secondary intensity", min_value=0.0, max_value=1.0, default_value=1.0,
+                    tag="stim_intensity2", callback=lambda s, a: state.stimulus_params.update({"intensity2": a}))
 
         with dpg.tree_node(label="Circuit", default_open=False):
             cfg = state.config
@@ -424,6 +498,7 @@ def run_app() -> None:
             _build_right_panel(state)
 
     _update_stimulus_visibility("spot")  # initial visibility for default type
+    _update_view_mode_ui("2D Heatmap")   # hide 3D-only controls until 3D is selected
 
     # Apply custom font to main window and globally
     app_font = _shared.get("app_font")

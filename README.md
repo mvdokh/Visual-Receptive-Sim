@@ -1,6 +1,8 @@
 # RGC Circuit Simulator
 
-![RGC circuit simulator UI](Screenshot 2026-03-08 at 12.18.39 PM.png)
+![RGC circuit simulator UI](images/screenshot1.png)
+
+![RGC circuit simulator 3D view](images/screenshot2.png)
 
 Retinal ganglion cell circuit simulator: stimulus → cones → horizontals → bipolars → amacrines → RGCs. Vectorized NumPy/SciPy pipeline, ModernGL 3D rendering, Dear PyGui.
 

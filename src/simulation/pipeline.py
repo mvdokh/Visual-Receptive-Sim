@@ -72,7 +72,7 @@ def tick(state: SimState, dt: float) -> None:
 
     # 1. Stimulus spectrum grid (H, W, L)
     state.stimulus_spectrum = build_stimulus_spectrum(
-        state.stimulus_params, cfg.spectral, state.grid_shape()
+        state.stimulus_params, cfg.spectral, state.grid_shape(), time_s=state.time
     )
 
     # 2. Cone responses via spectral dot product
