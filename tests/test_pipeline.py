@@ -1,0 +1,60 @@
+"""Tests for pipeline.tick: multi-step, connectivity weights, all state attributes."""
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from src.config import default_config
+from src.simulation.pipeline import tick, SMOOTHED_LAYERS
+from src.simulation.state import SimState
+
+
+@pytest.fixture
+def state():
+    return SimState(config=default_config())
+
+
+def test_tick_populates_all_layer_arrays(state):
+    """After tick, cone_L/M/S, h_activation, bipolar, amacrine, fr_*, lm_opponent, by_opponent are set."""
+    state.ensure_initialized()
+    state.stimulus_params = {"type": "full_field", "intensity": 0.5}
+    tick(state, 0.05)
+    assert state.cone_L is not None and state.cone_L.shape == state.grid_shape()
+    assert state.h_activation is not None
+    assert state.bp_midget_on_L is not None
+    assert state.amacrine_aii is not None
+    assert state.fr_midget_on_L is not None
+    assert state.lm_opponent is not None
+    assert state.by_opponent is not None
+
+
+def test_tick_increments_time(state):
+    """state.time increases by dt."""
+    state.ensure_initialized()
+    t0 = state.time
+    tick(state, 0.03)
+    assert state.time == pytest.approx(t0 + 0.03)
+    tick(state, 0.02)
+    assert state.time == pytest.approx(t0 + 0.05)
+
+
+def test_tick_connectivity_weights_scale_response(state):
+    """With bipolar_to_rgc=0 from cold start, RGC drive is 0 so LN gives half-max (r_max/2)."""
+    state.ensure_initialized()
+    state.config.connectivity_weights.bipolar_to_rgc = 0.0
+    state.stimulus_params = {"type": "full_field", "intensity": 0.0}  # no stimulus
+    for _ in range(30):
+        tick(state, 0.05)
+    # Zero drive → sigmoid(0) = r_max/2 = 60 with default x_half=0
+    assert float(np.mean(state.fr_midget_on_L)) == pytest.approx(60.0, abs=2.0)
+
+
+def test_tick_smoothed_layers_updated(state):
+    """After tick, state attributes for SMOOTHED_LAYERS match state.smoothed (pipeline overwrites with smoothed)."""
+    state.ensure_initialized()
+    state.stimulus_params = {"type": "spot", "intensity": 1.0}
+    tick(state, 0.05)
+    for attr in SMOOTHED_LAYERS:
+        arr = getattr(state, attr, None)
+        if arr is not None and attr in state.smoothed:
+            np.testing.assert_array_almost_equal(arr, state.smoothed[attr])

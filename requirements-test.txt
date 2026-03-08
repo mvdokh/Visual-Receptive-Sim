@@ -1,3 +1,4 @@
 # Install after requirements.txt for running tests.
 -r requirements.txt
 pytest>=7.0
+pytest-cov>=4.0
