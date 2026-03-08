@@ -144,10 +144,34 @@ def create_slabs(ctx: moderngl.Context, state) -> Dict[str, LayerSlab]:
     cfg = state.config
     wl = cfg.spectral.wavelengths if cfg else np.arange(380, 701, 5, dtype=np.float32)
     layout = signal_flow_slab_layout()
-    mapping = {
-        "Stimulus": (spectrum_to_stimulus_rgba(state.stimulus_spectrum, wl)
+    # For the Stimulus slab, prefer the original RGB image for `image` type
+    # so that the 3D plate matches the 2D Stimulus view and user expectation.
+    stim_params = getattr(state, "stimulus_params", {}) or {}
+    stim_type = stim_params.get("type", "spot")
+    if stim_type == "image" and "image_mask" in stim_params:
+        img = np.asarray(stim_params["image_mask"], dtype=np.float32)
+        h, w = state.grid_shape()
+        if img.ndim == 2:
+            img = np.stack([img, img, img], axis=-1)
+        if img.shape[0] != h or img.shape[1] != w:
+            img = np.resize(img, (h, w, img.shape[2]))
+        vmax = float(img.max()) if img.size > 0 else 0.0
+        if vmax > 1.0:
+            img = img / 255.0
+        img = np.clip(img, 0.0, 1.0)
+        gain = float(stim_params.get("intensity", 1.0))
+        rgb = np.clip(img * gain, 0.0, 1.0)
+        stim_rgba = np.zeros((h, w, 4), dtype=np.float32)
+        stim_rgba[..., :3] = rgb
+        stim_rgba[..., 3] = 1.0
+    else:
+        stim_rgba = (
+            spectrum_to_stimulus_rgba(state.stimulus_spectrum, wl)
             if state.stimulus_spectrum is not None
-            else np.zeros((*state.grid_shape(), 4), dtype=np.float32)),
+            else np.zeros((*state.grid_shape(), 4), dtype=np.float32)
+        )
+    mapping = {
+        "Stimulus": stim_rgba,
         "Cones": state.cone_L,
         "Horizontal": state.h_activation,
         "Bipolar": state.bp_diffuse_on,

@@ -16,7 +16,18 @@ The window has three main areas:
 ---------------
 
 - **Layer** combo selects which layer to display (Stimulus, Cones L/M/S, Horizontal, Bipolar ON, Amacrine, RGC Firing (L)).
-- The heatmap uses a firing colormap (black → amber → white) for activation layers; stimulus uses a spectral-derived RGB.
+- The heatmap uses a firing colormap (black → amber → white) for activation layers; Stimulus uses a spectral-derived RGB based on the current stimulus spectrum.
+  For `image` stimuli, the RGB image is mapped into a spectrum by projecting R/G/B channels onto three narrow wavelength bands (roughly long-, middle-, and short-wave),
+  so that L/M/S cone fundamentals can bin pixel colors into L, M, and S responses.
+
+Image stimuli
+-------------
+
+- Selecting **Stimulus → Type = image** enables the **Load image stimulus…** button.
+- The loaded image is sampled as RGB, resized to the retinal grid, and normalized to [0, 1].
+- Each pixel’s R, G, B values are converted into a spectral distribution by combining three Gaussian “basis” spectra centered at long (~610 nm), middle (~540 nm),
+  and short (~450 nm) wavelengths. This approximate sRGB→spectrum mapping preserves pixel hue so that cone fundamentals can integrate the image into L/M/S activity.
+- The **Intensity** slider then applies a global gain to this spectrum (higher values produce brighter stimuli and higher cone drive).
 
 3D Stack (Signal Flow Column) mode
 ----------------------------------

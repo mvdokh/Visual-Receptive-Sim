@@ -34,6 +34,7 @@ Parameters:
 from typing import Dict, Tuple
 
 import numpy as np
+from skimage.transform import resize
 
 from src.config import SpectralConfig, default_config
 
@@ -116,6 +117,61 @@ def build_stimulus_spectrum(
         ix = np.floor(Xc / check_deg).astype(int)
         iy = np.floor(Yc / check_deg).astype(int)
         mask = ((ix + iy) % 2 == 0).astype(np.float32)
+    elif stim_type == "image":
+        # Arbitrary image/photo stimulus with preserved RGB so that cone
+        # fundamentals can bin the colors into L/M/S.
+        image_mask = params.get("image_mask")
+        if image_mask is None:
+            return spectrum
+        img = np.asarray(image_mask, dtype=np.float32)
+        # Ensure shape (H, W, 3) in [0, 1].
+        if img.ndim == 2:
+            img = np.stack([img, img, img], axis=-1)
+        elif img.ndim == 3 and img.shape[2] >= 3:
+            img = img[..., :3]
+        else:
+            return spectrum
+        # Resize to current grid if needed.
+        if img.shape[0] != h or img.shape[1] != w:
+            img = resize(
+                img,
+                (h, w),
+                order=1,
+                mode="reflect",
+                anti_aliasing=True,
+                preserve_range=True,
+            ).astype(np.float32)
+        # Normalize from 0–255 if needed.
+        vmax = float(np.max(img)) if img.size > 0 else 0.0
+        if vmax > 1.0:
+            img = img / 255.0
+        img = np.clip(img, 0.0, 1.0)
+
+        # Map sRGB-ish channels to three narrowband spectral lobes so that
+        # downstream cone fundamentals can integrate them into L/M/S.
+        lam = spectral.wavelengths.astype(np.float32)
+        basis_R = np.exp(-0.5 * ((lam - 610.0) / 15.0) ** 2)
+        basis_G = np.exp(-0.5 * ((lam - 540.0) / 15.0) ** 2)
+        basis_B = np.exp(-0.5 * ((lam - 450.0) / 15.0) ** 2)
+        # Normalize each basis to max 1 so intensity slider is meaningful.
+        for b in (basis_R, basis_G, basis_B):
+            b_max = float(b.max())
+            if b_max > 0:
+                b /= b_max
+
+        R_chan = img[..., 0]
+        G_chan = img[..., 1]
+        B_chan = img[..., 2]
+        # Broadcast per-pixel RGB onto spectral basis.
+        spectrum[:] = (
+            R_chan[..., None] * basis_R[None, None, :]
+            + G_chan[..., None] * basis_G[None, None, :]
+            + B_chan[..., None] * basis_B[None, None, :]
+        )
+        # Apply global intensity slider.
+        if intensity != 1.0:
+            spectrum *= intensity
+        return spectrum
     elif stim_type == "moving_spot":
         mask = (R <= radius_deg).astype(np.float32)
     elif stim_type == "moving_bar":

@@ -13,6 +13,7 @@ from typing import Tuple
 
 import dearpygui.dearpygui as dpg
 import numpy as np
+from PIL import Image
 
 # Upscale factor for display (texture is grid_resolution * DISPLAY_SCALE)
 # 4 = 1024x1024 for a 256 grid: good balance of sharpness vs speed.
@@ -85,6 +86,7 @@ def _update_stimulus_visibility(stim_type: str, state: SimState | None = None) -
     ]
     # Hide everything first
     hide("stim_radius")
+    hide("stim_load_image_btn")
     for t in advanced_tags:
         hide(t)
 
@@ -109,6 +111,7 @@ def _update_stimulus_visibility(stim_type: str, state: SimState | None = None) -
             "stim_wavelength2",
             "stim_intensity2",
         ],
+        "image": ["stim_load_image_btn"],
     }
     tags_to_show = show_map.get(stim_type, show_map["spot"])
     for tag in tags_to_show:
@@ -193,6 +196,7 @@ def _build_left_panel(state: SimState) -> None:
                     "moving_bar",
                     "moving_grating",
                     "dual_spot",
+                    "image",
                 ],
                 default_value="spot",
                 tag="stimulus_type_combo",
@@ -219,6 +223,12 @@ def _build_left_panel(state: SimState) -> None:
                 default_value=0.15,
                 tag="stim_radius",
                 callback=lambda s, a: state.stimulus_params.update({"radius_deg": a}),
+            )
+            dpg.add_button(
+                label="Load image stimulus...",
+                width=-1,
+                tag="stim_load_image_btn",
+                callback=lambda: dpg.show_item("stim_image_dialog"),
             )
             with dpg.tree_node(label="Advanced", default_open=False, tag="stim_advanced_node"):
                 dpg.add_slider_float(label="X center (deg)", min_value=-0.5, max_value=0.5, default_value=0.0,
@@ -634,12 +644,30 @@ def run_app() -> None:
         if path:
             export_layer_grids_npy(state, Path(path))
 
+    def _on_stim_image(sender, app_data):
+        """Load an external image/photo as a stimulus mask."""
+        path = app_data.get("file_path_name")
+        if not path:
+            return
+        try:
+            # Keep RGB so that colors can be binned by L/M/S.
+            img = Image.open(path).convert("RGB")
+            h, w = state.grid_shape()
+            img = img.resize((w, h), Image.BILINEAR)
+            arr = np.asarray(img, dtype=np.float32)
+            # Store in 0–1 so spectral construction can preserve RGB ratios.
+            state.stimulus_params["image_mask"] = (arr / 255.0).astype(np.float32)
+        except Exception as e:
+            # Fallback: simple stderr print so the app keeps running.
+            print(f"Failed to load stimulus image: {e}")
+
     with dpg.file_dialog(
         callback=_on_png,
         tag="file_dialog_png",
         show=False,
         modal=True,
         directory_selector=False,
+        height=520,
     ):
         dpg.add_file_extension(".*")
         dpg.add_file_extension(".png", color=(0, 255, 0, 255))
@@ -650,6 +678,7 @@ def run_app() -> None:
         show=False,
         modal=True,
         directory_selector=False,
+        height=520,
     ):
         dpg.add_file_extension(".*")
         dpg.add_file_extension(".csv", color=(0, 255, 0, 255))
@@ -660,8 +689,22 @@ def run_app() -> None:
         show=False,
         modal=True,
         directory_selector=True,
+        height=520,
     ):
         pass
+
+    with dpg.file_dialog(
+        callback=_on_stim_image,
+        tag="stim_image_dialog",
+        show=False,
+        modal=True,
+        directory_selector=False,
+        height=520,
+    ):
+        dpg.add_file_extension(".png", color=(0, 255, 0, 255))
+        dpg.add_file_extension(".jpg")
+        dpg.add_file_extension(".jpeg")
+        dpg.add_file_extension(".*")
 
     # Shared state for main loop
     _shared["state"] = state
@@ -807,9 +850,34 @@ def run_app() -> None:
         else:
             # 2D heatmap
             layer_name = dpg.get_value("layer_combo") if dpg.does_item_exist("layer_combo") else "RGC Firing (L)"
-            if layer_name == "Stimulus" and state.stimulus_spectrum is not None:
-                wl = state.config.spectral.wavelengths
-                rgba = spectrum_to_stimulus_rgba(state.stimulus_spectrum, wl)
+            if layer_name == "Stimulus":
+                stim_type = state.stimulus_params.get("type", "spot")
+                # For image stimuli, show the loaded RGB image directly so the
+                # user sees the true pixel colors rather than the spectral
+                # centroid approximation used internally for cones.
+                if stim_type == "image" and "image_mask" in state.stimulus_params:
+                    img = np.asarray(state.stimulus_params["image_mask"], dtype=np.float32)
+                    h, w = state.grid_shape()
+                    if img.ndim == 2:
+                        img = np.stack([img, img, img], axis=-1)
+                    if img.shape[0] != h or img.shape[1] != w:
+                        img = np.resize(img, (h, w, img.shape[2]))
+                    vmax = float(img.max()) if img.size > 0 else 0.0
+                    if vmax > 1.0:
+                        img = img / 255.0
+                    img = np.clip(img, 0.0, 1.0)
+                    # Apply global intensity as a simple gain for display.
+                    gain = float(state.stimulus_params.get("intensity", 1.0))
+                    rgb = np.clip(img * gain, 0.0, 1.0)
+                    rgba = np.zeros((h, w, 4), dtype=np.float32)
+                    rgba[..., :3] = rgb
+                    rgba[..., 3] = 1.0
+                elif state.stimulus_spectrum is not None:
+                    wl = state.config.spectral.wavelengths
+                    rgba = spectrum_to_stimulus_rgba(state.stimulus_spectrum, wl)
+                else:
+                    h, w = state.grid_shape()
+                    rgba = np.zeros((h, w, 4), dtype=np.float32)
             else:
                 layer_map = {
                     "Cones L": (state.cone_L, "firing"),

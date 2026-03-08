@@ -45,12 +45,12 @@ def _wavelength_to_rgb_vec(w: np.ndarray, gamma: float = 0.8) -> np.ndarray:
 
 
 def spectrum_to_stimulus_rgba(
-    spectrum: np.ndarray, wavelengths: np.ndarray, intensity_scale: float = 0.08
+    spectrum: np.ndarray, wavelengths: np.ndarray, intensity_scale: float = 0.25
 ) -> np.ndarray:
     """
     Convert stimulus spectrum (H, W, L) to RGBA for display.
     Uses weighted-centroid wavelength for hue, total power for brightness.
-    intensity_scale: maps raw power to 0-1 (typical ~0.08 for intensity=1).
+    intensity_scale: maps raw power to 0-1 (tuned so intensity≈1 appears near full).
     """
     total = np.sum(spectrum, axis=-1)
     total = np.maximum(total, 1e-9)

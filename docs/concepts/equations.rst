@@ -27,6 +27,24 @@ Stimulus is a spectral grid :math:`S(x,y,\lambda)`. Cone fundamentals :math:`\ba
 
 In the code this is a discrete dot product over the wavelength axis (einsum).
 
+Pixel-image stimuli
+~~~~~~~~~~~~~~~~~~~
+
+For analytic stimuli (spot, bar, grating, etc.), :math:`S(x,y,\lambda)` is factorized into a spatial mask :math:`M(x,y)` and a narrowband spectral profile centered at a
+user-chosen wavelength (with an overall intensity gain). For **image** stimuli, the simulator starts from an RGB pixel image :math:`I(x,y) = (R,G,B)` and constructs
+an approximate spectrum per pixel before applying the cone fundamentals.
+
+Concretely, three Gaussian "basis" spectra :math:`b_R(\lambda), b_G(\lambda), b_B(\lambda)` are defined, centered at long-, middle-, and short-wave wavelengths
+(:math:`\approx 610, 540, 450\,\mathrm{nm}`), normalized so that :math:`\max_\lambda b_\cdot(\lambda) = 1`. Then:
+
+.. math::
+
+   S(x,y,\lambda) \approx R(x,y)\,b_R(\lambda) + G(x,y)\,b_G(\lambda) + B(x,y)\,b_B(\lambda),
+
+with :math:`R,G,B \in [0,1]` the normalized pixel values. A global **Intensity** parameter :math:`\alpha \in [0,1]` multiplies this spectrum,
+so the effective stimulus is :math:`\alpha\,S(x,y,\lambda)`. This preserves pixel hue (up to the three-band approximation) so that the cone fundamentals
+can bin the image into L/M/S responses in a color-consistent way.
+
 ---
 
 2. Horizontal cell pooling

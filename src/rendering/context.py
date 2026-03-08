@@ -97,28 +97,30 @@ class RenderContext:
         self.cell_spheres = CellSpheresRenderer(self.ctx, subsample=subsample)
 
     def update_from_state(self, state: SimState) -> None:
-        self.ensure_scene(state)
-        cfg = state.config
-        wl = cfg.spectral.wavelengths if cfg else np.arange(380, 701, 5, dtype=np.float32)
-        stim_rgba = (
-            spectrum_to_stimulus_rgba(state.stimulus_spectrum, wl)
-            if state.stimulus_spectrum is not None
-            else np.zeros((*state.grid_shape(), 4), dtype=np.float32)
-        )
-        mapping = {
-            "Stimulus": stim_rgba,
-            "Cones": state.cone_L,
-            "Horizontal": state.h_activation,
-            "Bipolar": state.bp_diffuse_on,
-            "Amacrine": state.amacrine_aii,
-            "RGC": state.fr_midget_on_L,
-        }
-        # Always push latest grids into existing slab textures so 3D view
-        # matches the current stimulus and layer activity.
+        """
+        Refresh 3D scene objects from the latest simulation state.
+
+        To ensure the 3D slabs (especially the Stimulus slab) never get stuck
+        on an old texture, we rebuild the slab set from scratch each frame
+        using `create_slabs`, then restore per-layer visibility/opacity.
+        This guarantees the Stimulus slab matches the current stimulus just
+        like the 2D Stimulus heatmap.
+        """
+        # Preserve current visibility / opacity so UI toggles persist.
+        prev_settings: Dict[str, Tuple[bool, float]] = {}
         for label, slab in self.slabs.items():
-            grid = mapping.get(label)
-            if grid is not None:
-                slab.update_from_grid(grid)
+            prev_settings[label] = (slab.visible, slab.opacity)
+
+        # Recreate all slabs from the *current* state.
+        self.slabs = create_slabs(self.ctx, state)
+
+        # Reapply visibility / opacity where possible.
+        for label, slab in self.slabs.items():
+            if label in prev_settings:
+                vis, op = prev_settings[label]
+                slab.visible = vis
+                slab.opacity = op
+
         if self.layer_trace_strips is not None and self.trace_buffers is not None:
             self.layer_trace_strips.update_buffers(state, self.slice_x, self.trace_buffers)
 
