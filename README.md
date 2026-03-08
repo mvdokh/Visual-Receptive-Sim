@@ -41,6 +41,8 @@ src/
 └── gui/
     ├── app.py          # Dear PyGui main loop, panels
     └── panels/         # data_export
+
+hot_numerical/          # Cython templates for numerical hotspots (not yet integrated)
 ```
 
 ## TODO
