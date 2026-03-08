@@ -136,6 +136,21 @@ def default_config() -> GlobalConfig:
 
 
 def layer_z_positions() -> Tuple[float, ...]:
-    """Return canonical Z positions for each layer in world space."""
+    """Return canonical Z positions for each layer in world space (legacy flat stack)."""
     return (6.0, 5.0, 4.0, 3.0, 2.0, 1.0, 0.0)
 
+
+def signal_flow_slab_layout() -> Tuple[Tuple[str, float, float], ...]:
+    """
+    Signal Flow Column: (layer_name, y_top, thickness).
+    Y increases downward (RGC at bottom). Thickness proportional to biology.
+    Order top-to-bottom: Stimulus, Cones, Horizontal, Bipolar, Amacrine, RGC.
+    """
+    return (
+        ("Stimulus", 5.5, 0.4),   # thin stimulus layer
+        ("Cones", 5.0, 0.6),      # photoreceptors - thickest
+        ("Horizontal", 4.2, 0.25),  # thinnest
+        ("Bipolar", 3.8, 0.45),
+        ("Amacrine", 3.2, 0.35),
+        ("RGC", 2.6, 0.5),        # ganglion cell layer
+    )

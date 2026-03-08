@@ -19,7 +19,7 @@ DISPLAY_SCALE = 4
 
 from src.config import default_config
 from src.rendering import RenderContext
-from src.rendering.scene_3d.camera import ELEVATION_MAX
+from src.rendering.scene_3d.camera import ELEVATION_MAX, DEFAULT_AZIMUTH, DEFAULT_ELEVATION
 from src.rendering.heatmap import grid_to_rgba, spectrum_to_stimulus_rgba
 from src.gui.panels.data_export import (
     export_screenshot_png,
@@ -128,13 +128,12 @@ def _reset_camera(preset: str) -> None:
     ctx = _shared.get("render_ctx")
     if ctx is not None:
         ctx.camera.set_preset(preset)
-        for tag, prop, val in [
-            ("camera_azimuth", "azimuth", ctx.camera.azimuth),
-            ("camera_elevation", "elevation", ctx.camera.elevation),
-            ("camera_distance", "distance", ctx.camera.distance),
-        ]:
-            if dpg.does_item_exist(tag):
-                dpg.set_value(tag, val)
+        if dpg.does_item_exist("camera_azimuth"):
+            dpg.set_value("camera_azimuth", ctx.camera._azimuth_target)
+        if dpg.does_item_exist("camera_elevation"):
+            dpg.set_value("camera_elevation", ctx.camera._elevation_target)
+        if dpg.does_item_exist("camera_distance"):
+            dpg.set_value("camera_distance", ctx.camera._distance_target)
 
 
 def _build_menu_bar() -> None:
@@ -144,7 +143,7 @@ def _build_menu_bar() -> None:
         with dpg.menu(label="View"):
             dpg.add_menu_item(label="Reset camera", callback=lambda: _reset_camera("iso"))
             dpg.add_menu_item(label="Top view", callback=lambda: _reset_camera("top"))
-            dpg.add_menu_item(label="Side view", callback=lambda: _reset_camera("side"))
+            dpg.add_menu_item(label="Front view", callback=lambda: _reset_camera("front"))
             dpg.add_menu_item(label="Isometric view", callback=lambda: _reset_camera("iso"))
         with dpg.menu(label="Simulation"):
             dpg.add_menu_item(label="Pause / Resume")  # placeholder
@@ -300,38 +299,45 @@ def _build_left_panel(state: SimState) -> None:
             )
 
         with dpg.tree_node(label="Camera (3D)", default_open=True, tag="camera_3d_node"):
+            dpg.add_checkbox(label="Show signal flow", default_value=True, tag="show_signal_flow")
+            dpg.add_slider_float(label="Slice position", min_value=-0.5, max_value=0.5, default_value=0.0,
+                tag="slice_position")
             dpg.add_slider_float(
                 label="Azimuth (rad)",
                 min_value=-3.14,
                 max_value=3.14,
-                default_value=0.4,
+                default_value=float(DEFAULT_AZIMUTH),
                 tag="camera_azimuth",
-                callback=lambda s, a: _shared.get("render_ctx") and setattr(_shared["render_ctx"].camera, "azimuth", a),
+                callback=lambda s, a: _shared.get("render_ctx") and (
+                    setattr(_shared["render_ctx"].camera, "_azimuth_target", a)
+                    or setattr(_shared["render_ctx"].camera, "azimuth", a)),
             )
             dpg.add_slider_float(
                 label="Elevation (rad)",
                 min_value=-ELEVATION_MAX,
                 max_value=ELEVATION_MAX,
-                default_value=0.5,
+                default_value=float(DEFAULT_ELEVATION),
                 tag="camera_elevation",
-                callback=lambda s, a: _shared.get("render_ctx") and setattr(_shared["render_ctx"].camera, "elevation", a),
+                callback=lambda s, a: _shared.get("render_ctx") and (
+                    setattr(_shared["render_ctx"].camera, "_elevation_target", a)
+                    or setattr(_shared["render_ctx"].camera, "elevation", a)),
             )
             dpg.add_slider_float(
                 label="Distance",
-                min_value=2.0,
-                max_value=10.0,
-                default_value=4.0,
+                min_value=3.0,
+                max_value=14.0,
+                default_value=6.0,
                 tag="camera_distance",
-                callback=lambda s, a: _shared.get("render_ctx") and setattr(_shared["render_ctx"].camera, "distance", a),
+                callback=lambda s, a: _shared.get("render_ctx") and (
+                    setattr(_shared["render_ctx"].camera, "_distance_target", a)
+                    or setattr(_shared["render_ctx"].camera, "distance", a)),
             )
             with dpg.tree_node(label="Layer visibility", default_open=True):
                 _layer_names = ["Stimulus", "Cones", "Horizontal", "Bipolar", "Amacrine", "RGC"]
                 for name in _layer_names:
                     with dpg.group(horizontal=True):
-                        dpg.add_checkbox(label=name, default_value=True, tag=f"layer_vis_{name}",
-                            callback=lambda s, a, n=name: _shared.get("render_ctx") and (_shared["render_ctx"].layer_planes.get(n) and setattr(_shared["render_ctx"].layer_planes[n], "visible", a)))
-                        dpg.add_slider_float(width=80, min_value=0.0, max_value=1.0, default_value=0.6, tag=f"layer_opacity_{name}",
-                            callback=lambda s, a, n=name: _shared.get("render_ctx") and (_shared["render_ctx"].layer_planes.get(n) and setattr(_shared["render_ctx"].layer_planes[n], "opacity", a)))
+                        dpg.add_checkbox(label=name, default_value=True, tag=f"layer_vis_{name}")
+                        dpg.add_slider_float(width=80, min_value=0.0, max_value=1.0, default_value=0.85, tag=f"layer_opacity_{name}")
 
 def _build_right_panel(state: SimState) -> None:
     """Right panel: tab bar so Stats, Export, RF each fit without scrolling."""
@@ -679,38 +685,36 @@ def run_app() -> None:
                     config=cfg,
                 )
             ctx = _shared["render_ctx"]
-            # Ensure planes exist before syncing visibility (creates on first 3D render)
             ctx.ensure_scene(state)
-            # Sync layer visibility/opacity from UI
+            # Sync slab visibility/opacity from UI
             for name in ["Stimulus", "Cones", "Horizontal", "Bipolar", "Amacrine", "RGC"]:
-                plane = ctx.layer_planes.get(name)
-                if plane is not None:
+                slab = ctx.slabs.get(name)
+                if slab is not None:
                     if dpg.does_item_exist(f"layer_vis_{name}"):
-                        plane.visible = dpg.get_value(f"layer_vis_{name}")
+                        slab.visible = dpg.get_value(f"layer_vis_{name}")
                     if dpg.does_item_exist(f"layer_opacity_{name}"):
-                        plane.opacity = dpg.get_value(f"layer_opacity_{name}")
-            # Camera damping
+                        slab.opacity = dpg.get_value(f"layer_opacity_{name}")
+            # Sync connectivity and slice from UI
+            if dpg.does_item_exist("show_signal_flow"):
+                ctx.show_connectivity = dpg.get_value("show_signal_flow")
+            if dpg.does_item_exist("slice_position"):
+                ctx.slice_x = dpg.get_value("slice_position")
+            # Camera: smooth lerp
             ctx.camera.integrate(dt)
-            # Mouse orbit: drag to rotate, scroll to zoom (only when viewport hovered)
+            # Mouse: drag (0.25 sensitivity), scroll zoom
             if dpg.does_item_exist(VIEWPORT_AREA_TAG) and dpg.is_item_hovered(VIEWPORT_AREA_TAG):
                 pos = dpg.get_mouse_pos()
                 if dpg.is_mouse_button_down(0):
                     last = _shared.get("last_mouse_pos")
                     if last is not None:
                         dx, dy = pos[0] - last[0], pos[1] - last[1]
-                        # Reduced sensitivity for smoother orbit
-                        ctx.camera.azimuth -= dx * 0.0018
-                        ctx.camera.elevation = max(-ELEVATION_MAX, min(ELEVATION_MAX, ctx.camera.elevation + dy * 0.0018))
-                        ctx.camera._azimuth_vel -= dx * 0.0006
-                        ctx.camera._elevation_vel += dy * 0.0006
+                        ctx.camera.add_drag(dx, dy, sensitivity=0.25)
                     _shared["last_mouse_pos"] = (pos[0], pos[1])
                 else:
                     _shared["last_mouse_pos"] = None
                 wheel = _shared.get("wheel_delta", 0)
                 if wheel != 0:
-                    # Gentler zoom steps
-                    factor = 0.96 if wheel > 0 else 1.04
-                    ctx.camera.distance = max(2.0, min(12.0, ctx.camera.distance * factor))
+                    ctx.camera.add_zoom(wheel)
                     _shared["wheel_delta"] = 0
             else:
                 _shared["last_mouse_pos"] = None

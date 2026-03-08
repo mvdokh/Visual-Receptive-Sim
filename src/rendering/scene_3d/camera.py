@@ -1,4 +1,4 @@
-"""Orbit camera for 3D retinal stack viewing."""
+"""Orbit camera for 3D retinal stack / Signal Flow Column viewing."""
 
 from __future__ import annotations
 
@@ -9,46 +9,67 @@ import numpy as np
 
 ELEVATION_MAX = 1.483  # ~85 deg, avoid flipping
 
+# Default: 3/4 perspective (azimuth 30°, elevation 25°) - shows top + front face
+DEFAULT_AZIMUTH = np.radians(30.0)
+DEFAULT_ELEVATION = np.radians(25.0)
+
+
 @dataclass
 class OrbitCamera:
-    """Orbit camera: target, distance, azimuth, elevation. Supports damped motion."""
+    """Orbit camera: target, distance, azimuth, elevation. Smooth lerp toward target."""
 
-    target: np.ndarray = field(default_factory=lambda: np.array([0.0, 0.0, 3.0], dtype=np.float32))
-    distance: float = 4.0
-    azimuth: float = 0.4  # radians
-    elevation: float = 0.5  # radians
+    target: np.ndarray = field(default_factory=lambda: np.array([0.0, 4.0, 0.0], dtype=np.float32))
+    distance: float = 6.0
+    azimuth: float = float(DEFAULT_AZIMUTH)
+    elevation: float = float(DEFAULT_ELEVATION)
     fov: float = 45.0  # degrees
-    # Damped velocity for smooth camera inertia
-    _azimuth_vel: float = 0.0
-    _elevation_vel: float = 0.0
-    _distance_vel: float = 0.0
-    _damping: float = 0.85  # per-frame decay
 
-    def apply_damping(self, dt: float) -> None:
-        """Apply damping to camera velocity."""
-        decay = self._damping ** (dt * 60)
-        self._azimuth_vel *= decay
-        self._elevation_vel *= decay
-        self._distance_vel *= decay
+    # Smoothed camera: lerp current toward target each frame
+    _azimuth_target: float = field(default=0.0, init=False)
+    _elevation_target: float = field(default=0.0, init=False)
+    _distance_target: float = field(default=0.0, init=False)
+    _lerp_rate: float = 0.12  # per-frame lerp toward target
+
+    def __post_init__(self) -> None:
+        self._azimuth_target = self.azimuth
+        self._elevation_target = self.elevation
+        self._distance_target = self.distance
+
+    def set_target_from_current(self) -> None:
+        """Sync target to current values."""
+        self._azimuth_target = self.azimuth
+        self._elevation_target = self.elevation
+        self._distance_target = self.distance
 
     def integrate(self, dt: float) -> None:
-        """Integrate velocity into azimuth, elevation, distance."""
-        self.azimuth += self._azimuth_vel * dt
-        self.elevation = max(-ELEVATION_MAX, min(ELEVATION_MAX, self.elevation + self._elevation_vel * dt))
-        self.distance = max(2.0, min(12.0, self.distance + self._distance_vel * dt))
-        self.apply_damping(dt)
+        """Smooth lerp current toward target."""
+        r = 1.0 - (1.0 - self._lerp_rate) ** (dt * 60)
+        self.azimuth += (self._azimuth_target - self.azimuth) * r
+        self.elevation += (self._elevation_target - self.elevation) * r
+        self.distance += (self._distance_target - self.distance) * r
+        self.elevation = max(-ELEVATION_MAX, min(ELEVATION_MAX, self.elevation))
+
+    def add_drag(self, dx: float, dy: float, sensitivity: float = 0.25) -> None:
+        """Add mouse drag to target angles. sensitivity multiplies raw delta."""
+        self._azimuth_target -= dx * sensitivity * 0.005
+        self._elevation_target += dy * sensitivity * 0.005
+        self._elevation_target = max(-ELEVATION_MAX, min(ELEVATION_MAX, self._elevation_target))
+
+    def add_zoom(self, delta: float) -> None:
+        """Add scroll zoom to target distance."""
+        factor = 0.96 if delta > 0 else 1.04
+        self._distance_target = max(3.0, min(14.0, self._distance_target * factor))
 
     def set_preset(self, name: str) -> None:
-        """Apply a camera preset: top, side, iso."""
-        self._azimuth_vel = 0.0
-        self._elevation_vel = 0.0
-        self._distance_vel = 0.0
+        """Apply a camera preset: top, front, iso."""
         if name == "top":
-            self.azimuth, self.elevation, self.distance = 0.0, ELEVATION_MAX, 5.0
-        elif name == "side":
-            self.azimuth, self.elevation, self.distance = 0.0, 0.0, 5.0
+            self._azimuth_target, self._elevation_target, self._distance_target = 0.0, ELEVATION_MAX, 7.0
+        elif name == "front":
+            self._azimuth_target, self._elevation_target, self._distance_target = 0.0, np.radians(5.0), 7.0
         elif name == "iso":
-            self.azimuth, self.elevation, self.distance = 0.785, 0.5, 5.0
+            self._azimuth_target = DEFAULT_AZIMUTH
+            self._elevation_target = DEFAULT_ELEVATION
+            self._distance_target = 6.0
 
     def eye_position(self) -> np.ndarray:
         """Camera position in world space."""
@@ -66,17 +87,12 @@ class OrbitCamera:
         right = np.cross(fwd, up)
         right = right / (np.linalg.norm(right) + 1e-8)
         up = np.cross(right, fwd)
-        # Column-major
         m = np.eye(4, dtype=np.float32)
         m[0:3, 0] = right
         m[0:3, 1] = up
         m[0:3, 2] = -fwd
-        m[0:3, 3] = eye
-        # Actually standard lookAt: R = [right, up, -fwd], t = -R @ eye
         m[:3, 3] = -np.array([
-            np.dot(right, eye),
-            np.dot(up, eye),
-            np.dot(-fwd, eye),
+            np.dot(right, eye), np.dot(up, eye), np.dot(-fwd, eye),
         ], dtype=np.float32)
         return m
 
