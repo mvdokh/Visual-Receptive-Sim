@@ -87,6 +87,17 @@ hot_numerical/          # Cython extensions for numerical hotspots (optional)
 docs/                   # Sphinx documentation (Read the Docs style)
 ```
 
+## Tests
+
+Succinct tests for biological assumptions (cone fundamentals, center–surround, ON/OFF, LN sigmoid, temporal RC, stimulus shapes, DoG fit, color opponent) and for config/state/export and slab layout. Run locally:
+
+```bash
+pip install -r requirements.txt -r requirements-test.txt
+PYTHONPATH=. pytest tests/ -v
+```
+
+Tests run automatically on **push** and **pull_request** via GitHub Actions (`.github/workflows/tests.yml`). See **`docs/TESTING.md`** for how to set up and enable testing on GitHub.
+
 ## TODO
 
 - Implement multi-color / multi-object stimuli
