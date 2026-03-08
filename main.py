@@ -7,7 +7,7 @@ This wires together:
 - Dear PyGui GUI
 """
 
-from rgc_simulator.gui.app import run_app
+from src.gui.app import run_app
 
 
 def main() -> None:
