@@ -65,6 +65,8 @@ class RenderContext:
     def _resize(self, width: int, height: int) -> None:
         # Single-sample FBO (no MSAA); second FBO for box-blur post-pass
         color_tex = self.ctx.texture((width, height), 4)
+        # Slight filtering to soften jagged edges without heavy post-processing
+        color_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
         depth_rb = self.ctx.depth_renderbuffer((width, height))
         self.fbo_msaa = self.ctx.framebuffer(
             color_attachments=[color_tex],
@@ -80,21 +82,25 @@ class RenderContext:
         return self.fbo_resolve.color_attachments[0]
 
     def ensure_scene(self, state: SimState) -> None:
-        if self.slabs:
-            return
-        self._slab_layout = list(signal_flow_slab_layout())
-        self.slabs = create_slabs(self.ctx, state)
-        self.connectivity = ConnectivityLines(self.ctx, self._slab_layout, subsample=8)
-        slab_height_px = 64
-        self.layer_trace_strips = LayerTraceStrips(
-            self.ctx, self._slab_layout, slab_height_px=slab_height_px
-        )
-        self.trace_buffers = allocate_trace_buffers(len(self._slab_layout), slab_height_px)
-        subsample = getattr(state.config, "cell_subsample", 8) if state.config else 8
-        self.cell_spheres = CellSpheresRenderer(self.ctx, subsample=subsample)
+        if not self._slab_layout:
+            self._slab_layout = list(signal_flow_slab_layout())
+        # Connectivity, trace strips, and spheres are created once and reused.
+        if self.connectivity is None:
+            self.connectivity = ConnectivityLines(self.ctx, self._slab_layout, subsample=8)
+        if self.layer_trace_strips is None or self.trace_buffers is None:
+            slab_height_px = 64
+            self.layer_trace_strips = LayerTraceStrips(
+                self.ctx, self._slab_layout, slab_height_px=slab_height_px
+            )
+            self.trace_buffers = allocate_trace_buffers(len(self._slab_layout), slab_height_px)
+        if self.cell_spheres is None:
+            subsample = getattr(state.config, "cell_subsample", 8) if state.config else 8
+            self.cell_spheres = CellSpheresRenderer(self.ctx, subsample=subsample)
 
     def update_from_state(self, state: SimState) -> None:
         self.ensure_scene(state)
+        # Rebuild slab textures each frame so they always reflect the latest state
+        # (stimulus type, connectivity, and responses).
         cfg = state.config
         wl = cfg.spectral.wavelengths if cfg else np.arange(380, 701, 5, dtype=np.float32)
         stim_rgba = (
@@ -102,6 +108,7 @@ class RenderContext:
             if state.stimulus_spectrum is not None
             else np.zeros((*state.grid_shape(), 4), dtype=np.float32)
         )
+        # Recreate slabs from current grids
         mapping = {
             "Stimulus": stim_rgba,
             "Cones": state.cone_L,
@@ -110,24 +117,25 @@ class RenderContext:
             "Amacrine": state.amacrine_aii,
             "RGC": state.fr_midget_on_L,
         }
-        if not self._slab_dirty_key:
-            self._slab_dirty_key = {
-                "Stimulus": "cone_L",  # no single key for stimulus; use cone_L as proxy for "any update"
-                "Cones": "cone_L",
-                "Horizontal": "h_activation",
-                "Bipolar": "bp_diffuse_on",
-                "Amacrine": "amacrine_aii",
-                "RGC": "fr_midget_on_L",
-            }
-        for label, slab in self.slabs.items():
-            dirty_key = self._slab_dirty_key.get(label)
-            if dirty_key is not None and not state.dirty_flags.get(dirty_key, True):
-                continue
-            grid = mapping.get(label)
-            if grid is not None:
-                slab.update_from_grid(grid)
-            if dirty_key is not None:
-                state.dirty_flags[dirty_key] = False
+        new_slabs: Dict[str, LayerSlab] = {}
+        for name, y_top, thick in self._slab_layout:
+            grid = mapping.get(name)
+            if grid is None:
+                grid = np.zeros(state.grid_shape(), dtype=np.float32)
+            slab = LayerSlab(
+                ctx=self.ctx,
+                label=name,
+                y_top=y_top,
+                thickness=thick,
+                grid=grid,
+                colormap="firing",
+                opacity=self.slabs.get(name).opacity if name in self.slabs else 0.85,
+            )
+            # Preserve visibility flag from previous frame if present
+            if name in self.slabs:
+                slab.visible = self.slabs[name].visible
+            new_slabs[name] = slab
+        self.slabs = new_slabs
         if self.layer_trace_strips is not None and self.trace_buffers is not None:
             self.layer_trace_strips.update_buffers(state, self.slice_x, self.trace_buffers)
 
@@ -193,7 +201,8 @@ class RenderContext:
     def render_3d(self, state: SimState) -> np.ndarray:
         """Render Signal Flow Column, resolve MSAA, apply bloom, return uint8 RGBA."""
         self.fbo_msaa.use()
-        self.ctx.clear(0.05, 0.05, 0.12, 1.0)
+        # Modern dark background with subtle blue tint
+        self.ctx.clear(0.02, 0.02, 0.06, 1.0)
         self.update_from_state(state)
 
         width, height = self.fbo_msaa.color_attachments[0].size
@@ -236,7 +245,6 @@ class RenderContext:
         if self.layer_trace_strips is not None and self.trace_buffers is not None:
             self.layer_trace_strips.draw(mvp, self.trace_buffers, fog_near, fog_far)
 
-        # 6. 3×3 box blur fullscreen post-pass (single draw)
-        self._blur_pass(width, height)
-        img = self._read_fbo_to_uint8(width, height, from_blur=True)
+        # 6. Read back color buffer (no extra blur; sharper image)
+        img = self._read_fbo_to_uint8(width, height, from_blur=False)
         return img
