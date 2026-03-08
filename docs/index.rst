@@ -6,7 +6,7 @@ A retinal ganglion cell (RGC) circuit simulator: **stimulus → cones → horizo
 This documentation is split into:
 
 - **Conceptual** — biology, model equations (with LaTeX), and theory, independent of the UI.
-- **User guide** — running the app, UI panels, 2D/3D views, and deployment.
+- **User guide** — running the app, UI panels, 2D/3D views.
 
 .. toctree::
    :maxdepth: 2
@@ -18,11 +18,10 @@ This documentation is split into:
 
 .. toctree::
    :maxdepth: 2
-   :caption: User guide (UI & deployment)
+   :caption: User guide (UI)
 
    user_guide/quickstart
    user_guide/interface
-   user_guide/deploy_github_pages
 
 Indices and tables
 ==================

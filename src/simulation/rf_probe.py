@@ -17,6 +17,11 @@ from src.config import GlobalConfig, default_config
 from src.simulation.pipeline import tick
 from src.simulation.state import SimState
 
+try:  # optional Cython acceleration for RF sampling
+    from hot_numerical.rf_probe_sweep import probe_sweep as _fast_probe_sweep
+except ImportError:  # pragma: no cover - optional
+    _fast_probe_sweep = None
+
 
 @dataclass
 class DoGFit:
@@ -233,16 +238,43 @@ def probe_sweep_fast(
     if fr_grid is None:
         fr_grid = np.zeros(state.grid_shape(), dtype=np.float32)
 
-    # RF is approximately the convolution of spot with circuit kernel.
-    # For a small spot, response at RGC (i,j) ~ sum over spot of kernel(i-io, j-jo).
-    # So sweeping the spot is equivalent to correlating the spot with the RF.
-    # The current fr_grid is the response to the current stimulus. For a delta
-    # spot at center, the RF would be the "receptive field" - the sensitivity
-    # map. We approximate by: RF(x,y) = response when spot is at (x,y).
-    # With linearity: that's the cross-correlation of the circuit output with
-    # a delta at (x,y). The circuit output for delta at (x0,y0) is the shifted
-    # impulse response. So RF = impulse_response (shifted to center).
-    # The impulse response for our circuit is complex. Simpler: use the
-    # gradient of fr with respect to stimulus position, or run a sparse sweep.
-    # For "fast" we run a 16x16 sweep (256 runs) instead of 48x48.
-    return probe_sweep(state, rgc_type, probe_resolution, probe_radius_deg)
+    # Map probe positions from degrees to fractional pixel coordinates.
+    # Column index j ↔ xs[j]; xs[j] = (j - w/2 + 0.5) * dx
+    # ⇒ j = xs / dx + w/2 - 0.5 (similarly for rows with ys, h).
+    Xp, Yp = np.meshgrid(x_probe, y_probe)
+    col = Xp / dx + w / 2.0 - 0.5
+    row = Yp / dx + h / 2.0 - 0.5
+
+    probe_xs = col.astype(np.float32).ravel()
+    probe_ys = row.astype(np.float32).ravel()
+
+    def _sample_grid(grid: np.ndarray, xs_flat: np.ndarray, ys_flat: np.ndarray) -> np.ndarray:
+        grid_f32 = np.asarray(grid, dtype=np.float32)
+        xs_f32 = np.asarray(xs_flat, dtype=np.float32)
+        ys_f32 = np.asarray(ys_flat, dtype=np.float32)
+        if _fast_probe_sweep is not None:
+            return _fast_probe_sweep(grid_f32, xs_f32, ys_f32)
+        # Pure NumPy bilinear interpolation fallback
+        h, w = grid_f32.shape
+        x = np.clip(xs_f32, 0.0, w - 1.0)
+        y = np.clip(ys_f32, 0.0, h - 1.0)
+        x0 = np.floor(x).astype(np.int64)
+        y0 = np.floor(y).astype(np.int64)
+        x1 = np.clip(x0 + 1, 0, w - 1)
+        y1 = np.clip(y0 + 1, 0, h - 1)
+        dx_f = x - x0
+        dy_f = y - y0
+        v00 = grid_f32[y0, x0]
+        v01 = grid_f32[y0, x1]
+        v10 = grid_f32[y1, x0]
+        v11 = grid_f32[y1, x1]
+        return (
+            (1.0 - dx_f) * (1.0 - dy_f) * v00
+            + dx_f * (1.0 - dy_f) * v01
+            + (1.0 - dx_f) * dy_f * v10
+            + dx_f * dy_f * v11
+        )
+
+    rf_flat = _sample_grid(fr_grid, probe_xs, probe_ys)
+    rf_map = rf_flat.reshape(probe_resolution, probe_resolution)
+    return x_probe, y_probe, rf_map

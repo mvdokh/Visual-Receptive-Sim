@@ -21,11 +21,12 @@ This follows the high-level steps described in the project spec:
 from typing import Iterable
 
 import numpy as np
-from scipy.ndimage import gaussian_filter
 
 from src.config import GlobalConfig
 from src.simulation.state import SimState
 from src.simulation.stimulus.spectral import build_stimulus_spectrum
+from src.simulation.fast_conv import gaussian_pool_2d
+from src.simulation.fast_layers import sigmoid_ln, temporal_rc
 
 
 SMOOTHED_LAYERS: Iterable[str] = [
@@ -54,12 +55,6 @@ SMOOTHED_LAYERS: Iterable[str] = [
     "fr_parasol_on",
     "fr_parasol_off",
 ]
-
-
-def _sigmoid(x: np.ndarray, r_max: float, x_half: float, slope: float) -> np.ndarray:
-    return r_max / (1.0 + np.exp(-slope * (x - x_half)))
-
-
 def tick(state: SimState, dt: float) -> None:
     """
     Advance the simulation by one time step of length `dt` (seconds).
@@ -93,8 +88,8 @@ def tick(state: SimState, dt: float) -> None:
     cone_lm = (state.cone_L + state.cone_M) * cone_to_h
     cone_s_in = state.cone_S * cone_to_h
 
-    h_lm = gaussian_filter(cone_lm, sigma=sigma_H, mode="reflect")
-    h_s = gaussian_filter(cone_s_in, sigma=sigma_H_s, mode="reflect")
+    h_lm = gaussian_pool_2d(cone_lm, sigma_H, mode="reflect")
+    h_s = gaussian_pool_2d(cone_s_in, sigma_H_s, mode="reflect")
     h_to_cone = cw.horizontal_to_cone if cw else 1.0
     state.h_activation = (
         h_lm * cfg.horizontal.alpha_lm * h_to_cone + h_s * cfg.horizontal.alpha_s * h_to_cone
@@ -115,7 +110,7 @@ def tick(state: SimState, dt: float) -> None:
     state.bp_midget_on_M = np.maximum(0.0, state.cone_M_eff * cone_to_bp)
     state.bp_midget_off_M = np.maximum(0.0, -state.cone_M_eff * cone_to_bp)
 
-    pooled = gaussian_filter(cone_lm_eff, sigma=sigma_diffuse, mode="reflect")
+    pooled = gaussian_pool_2d(cone_lm_eff, sigma_diffuse, mode="reflect")
     state.bp_diffuse_on = np.maximum(0.0, pooled)
     state.bp_diffuse_off = np.maximum(0.0, -pooled)
 
@@ -125,10 +120,10 @@ def tick(state: SimState, dt: float) -> None:
     sigma_aii = cfg.amacrine.sigma_aii_deg / cfg.retina.dx_deg
     sigma_wide = cfg.amacrine.sigma_wide_deg / cfg.retina.dx_deg
 
-    state.amacrine_aii = gaussian_filter(
-        (state.bp_midget_on_L + state.bp_midget_on_M) * bp_to_am, sigma=sigma_aii, mode="reflect"
+    state.amacrine_aii = gaussian_pool_2d(
+        (state.bp_midget_on_L + state.bp_midget_on_M) * bp_to_am, sigma_aii, mode="reflect"
     )
-    state.amacrine_wide = gaussian_filter(cone_lm_eff * bp_to_am, sigma=sigma_wide, mode="reflect")
+    state.amacrine_wide = gaussian_pool_2d(cone_lm_eff * bp_to_am, sigma_wide, mode="reflect")
 
     total_amacrine = (
         cfg.amacrine.gamma_aii * am_to_bp * state.amacrine_aii
@@ -141,7 +136,7 @@ def tick(state: SimState, dt: float) -> None:
     def rgc_generator(bp_grid: np.ndarray, sigma_deg: float) -> np.ndarray:
         sigma_px = sigma_deg / cfg.retina.dx_deg
         drive = (bp_grid - total_amacrine) * bp_to_rgc
-        return gaussian_filter(drive, sigma=sigma_px, mode="reflect")
+        return gaussian_pool_2d(drive, sigma_px, mode="reflect")
 
     state.rgc_midget_on_L = rgc_generator(
         state.bp_midget_on_L, cfg.dendritic.sigma_midget_deg
@@ -164,16 +159,16 @@ def tick(state: SimState, dt: float) -> None:
 
     # 8. LN sigmoid → firing rates
     nl = cfg.rgc_nl
-    state.fr_midget_on_L = _sigmoid(state.rgc_midget_on_L, nl.r_max, nl.x_half, nl.slope)
-    state.fr_midget_off_L = _sigmoid(
+    state.fr_midget_on_L = sigmoid_ln(state.rgc_midget_on_L, nl.r_max, nl.x_half, nl.slope)
+    state.fr_midget_off_L = sigmoid_ln(
         state.rgc_midget_off_L, nl.r_max, nl.x_half, nl.slope
     )
-    state.fr_midget_on_M = _sigmoid(state.rgc_midget_on_M, nl.r_max, nl.x_half, nl.slope)
-    state.fr_midget_off_M = _sigmoid(
+    state.fr_midget_on_M = sigmoid_ln(state.rgc_midget_on_M, nl.r_max, nl.x_half, nl.slope)
+    state.fr_midget_off_M = sigmoid_ln(
         state.rgc_midget_off_M, nl.r_max, nl.x_half, nl.slope
     )
-    state.fr_parasol_on = _sigmoid(state.rgc_parasol_on, nl.r_max, nl.x_half, nl.slope)
-    state.fr_parasol_off = _sigmoid(
+    state.fr_parasol_on = sigmoid_ln(state.rgc_parasol_on, nl.r_max, nl.x_half, nl.slope)
+    state.fr_parasol_off = sigmoid_ln(
         state.rgc_parasol_off, nl.r_max, nl.x_half, nl.slope
     )
 
@@ -216,9 +211,10 @@ def tick(state: SimState, dt: float) -> None:
         alpha = max(0.0, min(alpha, 1.0))
         prev = state.smoothed[attr]
         curr = getattr(state, attr)
-        smoothed = prev + (curr - prev) * alpha
-        state.smoothed[attr] = smoothed
-        setattr(state, attr, smoothed)
+        temporal_rc(prev, curr, alpha)
+        # prev mutated in-place by temporal_rc
+        state.smoothed[attr] = prev
+        setattr(state, attr, prev)
 
     # 11. Mark all textures dirty
     for key in state.dirty_flags:

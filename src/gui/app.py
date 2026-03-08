@@ -15,8 +15,8 @@ import dearpygui.dearpygui as dpg
 import numpy as np
 
 # Upscale factor for display (texture is grid_resolution * DISPLAY_SCALE)
-# Higher = sharper 2D/3D viewers (6 = 1536x1536 for 256 grid)
-DISPLAY_SCALE = 6
+# 4 = 1024x1024 for a 256 grid: good balance of sharpness vs speed.
+DISPLAY_SCALE = 4
 
 from src.config import default_config
 from src.rendering import RenderContext

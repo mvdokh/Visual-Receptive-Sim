@@ -82,25 +82,22 @@ class RenderContext:
         return self.fbo_resolve.color_attachments[0]
 
     def ensure_scene(self, state: SimState) -> None:
-        if not self._slab_layout:
-            self._slab_layout = list(signal_flow_slab_layout())
-        # Connectivity, trace strips, and spheres are created once and reused.
-        if self.connectivity is None:
-            self.connectivity = ConnectivityLines(self.ctx, self._slab_layout, subsample=8)
-        if self.layer_trace_strips is None or self.trace_buffers is None:
-            slab_height_px = 64
-            self.layer_trace_strips = LayerTraceStrips(
-                self.ctx, self._slab_layout, slab_height_px=slab_height_px
-            )
-            self.trace_buffers = allocate_trace_buffers(len(self._slab_layout), slab_height_px)
-        if self.cell_spheres is None:
-            subsample = getattr(state.config, "cell_subsample", 8) if state.config else 8
-            self.cell_spheres = CellSpheresRenderer(self.ctx, subsample=subsample)
+        if self.slabs:
+            return
+        self._slab_layout = list(signal_flow_slab_layout())
+        # Create slabs once; their textures will be updated each frame.
+        self.slabs = create_slabs(self.ctx, state)
+        self.connectivity = ConnectivityLines(self.ctx, self._slab_layout, subsample=8)
+        slab_height_px = 64
+        self.layer_trace_strips = LayerTraceStrips(
+            self.ctx, self._slab_layout, slab_height_px=slab_height_px
+        )
+        self.trace_buffers = allocate_trace_buffers(len(self._slab_layout), slab_height_px)
+        subsample = getattr(state.config, "cell_subsample", 8) if state.config else 8
+        self.cell_spheres = CellSpheresRenderer(self.ctx, subsample=subsample)
 
     def update_from_state(self, state: SimState) -> None:
         self.ensure_scene(state)
-        # Rebuild slab textures each frame so they always reflect the latest state
-        # (stimulus type, connectivity, and responses).
         cfg = state.config
         wl = cfg.spectral.wavelengths if cfg else np.arange(380, 701, 5, dtype=np.float32)
         stim_rgba = (
@@ -108,7 +105,6 @@ class RenderContext:
             if state.stimulus_spectrum is not None
             else np.zeros((*state.grid_shape(), 4), dtype=np.float32)
         )
-        # Recreate slabs from current grids
         mapping = {
             "Stimulus": stim_rgba,
             "Cones": state.cone_L,
@@ -117,25 +113,12 @@ class RenderContext:
             "Amacrine": state.amacrine_aii,
             "RGC": state.fr_midget_on_L,
         }
-        new_slabs: Dict[str, LayerSlab] = {}
-        for name, y_top, thick in self._slab_layout:
-            grid = mapping.get(name)
-            if grid is None:
-                grid = np.zeros(state.grid_shape(), dtype=np.float32)
-            slab = LayerSlab(
-                ctx=self.ctx,
-                label=name,
-                y_top=y_top,
-                thickness=thick,
-                grid=grid,
-                colormap="firing",
-                opacity=self.slabs.get(name).opacity if name in self.slabs else 0.85,
-            )
-            # Preserve visibility flag from previous frame if present
-            if name in self.slabs:
-                slab.visible = self.slabs[name].visible
-            new_slabs[name] = slab
-        self.slabs = new_slabs
+        # Always push latest grids into existing slab textures so 3D view
+        # matches the current stimulus and layer activity.
+        for label, slab in self.slabs.items():
+            grid = mapping.get(label)
+            if grid is not None:
+                slab.update_from_grid(grid)
         if self.layer_trace_strips is not None and self.trace_buffers is not None:
             self.layer_trace_strips.update_buffers(state, self.slice_x, self.trace_buffers)
 

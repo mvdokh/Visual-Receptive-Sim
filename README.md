@@ -6,7 +6,7 @@
 
 Retinal ganglion cell circuit simulator: stimulus → cones → horizontals → bipolars → amacrines → RGCs. Vectorized NumPy/SciPy pipeline, ModernGL 3D rendering, Dear PyGui.
 
-## Quick Start
+## Quick Start (Python only)
 
 ```bash
 python -m venv .venv
@@ -14,6 +14,43 @@ source .venv/bin/activate   # or .venv\Scripts\activate on Windows
 pip install -r requirements.txt
 python main.py
 ```
+
+## Optional Cython acceleration
+
+The core simulation runs entirely in **NumPy + SciPy**, but there is an optional
+`hot_numerical/` package with Cython implementations for numerical hotspots:
+
+- `convolve_2d.pyx` — separable 2D Gaussian pooling
+- `layer_update.pyx` — sigmoid LN and temporal RC updates
+- `rf_probe_sweep.pyx` — RF probe sweep interpolation
+
+You **do not need** Cython to run the simulator. If you want to enable the
+accelerated paths:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate   # or .venv\Scripts\activate on Windows
+pip install -r requirements.txt
+cd hot_numerical
+python setup.py build_ext --inplace
+cd ..
+
+python main.py
+```
+
+Notes:
+
+- The pipeline dynamically imports the Cython extensions when present and falls
+  back to pure NumPy/SciPy if they are missing.
+- By default, Gaussian pooling still uses SciPy’s highly optimized
+  `gaussian_filter`. To **force** the Cython 2D Gaussian implementation, run:
+
+  ```bash
+  HOT_NUMERICAL_USE_CYTHON_CONV=1 python main.py
+  ```
+
+  (leave this unset unless you specifically want to test the Cython kernel).
+
 
 ## Overview
 
@@ -33,20 +70,21 @@ NumPy, SciPy, Numba, ModernGL, Dear PyGui, colour-science, Pillow, scikit-image.
 src/
 ├── config.py           # Biological constants, layer z-positions
 ├── simulation/
-│   ├── pipeline.py     # Master tick(), vectorized layer updates
+│   ├── pipeline.py     # Master tick(), vectorized layer updates (+ fast_* wrappers)
 │   ├── state.py        # SimState dataclass
 │   ├── layers/         # cones, horizontal, bipolar, amacrine, rgc
 │   ├── stimulus/       # spectral.py (spot, bar, grating, etc.)
-│   └── rf_probe.py     # Probe sweep, DoG fit
+│   └── rf_probe.py     # Probe sweep, DoG fit (+ fast RF path)
 ├── rendering/
 │   ├── context.py      # ModernGL FBO, render_3d()
 │   ├── heatmap.py      # Grid → RGBA colormaps
-│   └── scene_3d/       # layer_planes, cell_spheres, camera
+│   └── scene_3d/       # slabs, connectivity, cell_spheres, camera
 └── gui/
     ├── app.py          # Dear PyGui main loop, panels
     └── panels/         # data_export
 
-hot_numerical/          # Cython templates for numerical hotspots (not yet integrated)
+hot_numerical/          # Cython extensions for numerical hotspots (optional)
+docs/                   # Sphinx documentation (Read the Docs style)
 ```
 
 ## TODO
