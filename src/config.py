@@ -117,11 +117,25 @@ class SpectralConfig:
 
 
 @dataclass
+class ConnectivityWeights:
+    """Editable weights for 3D connectivity display and pipeline scaling."""
+
+    cone_to_horizontal: float = 1.0
+    cone_to_bipolar: float = 1.0
+    horizontal_to_cone: float = 1.0
+    bipolar_to_amacrine: float = 1.0
+    amacrine_to_bipolar: float = 1.0
+    bipolar_to_rgc: float = 1.0
+
+
+@dataclass
 class GlobalConfig:
     """Top-level configuration object passed around the app."""
 
     retina: RetinaGeometry = field(default_factory=RetinaGeometry)
     temporal: TemporalConstants = field(default_factory=TemporalConstants)
+    cell_subsample: int = 8  # 3D Signal Flow: grid subsample for cell spheres (higher = fewer instances)
+    connectivity_weights: ConnectivityWeights = field(default_factory=ConnectivityWeights)
     rgc_nl: RGCNonlinearity = field(default_factory=RGCNonlinearity)
     horizontal: HorizontalCellParams = field(default_factory=HorizontalCellParams)
     bipolar: BipolarParams = field(default_factory=BipolarParams)

@@ -1,8 +1,8 @@
 """
 ModernGL rendering context for the 3D Signal Flow Column.
 
-Scene: thick horizontal slabs (anatomical cross-section), connectivity lines,
-cell spheres with bloom, slice plane with 1D activity graph.
+Scene: thick horizontal slabs, connectivity lines (four types), cell spheres with
+GPU additive bloom, per-layer trace strips (rolling heatmaps), box-blur post-pass.
 """
 
 from __future__ import annotations
@@ -12,21 +12,23 @@ from typing import Dict, Optional, Tuple
 
 import moderngl
 import numpy as np
-from scipy.ndimage import gaussian_filter
 
 from src.config import GlobalConfig, signal_flow_slab_layout
 from src.rendering.heatmap import spectrum_to_stimulus_rgba
 from src.rendering.scene_3d.camera import OrbitCamera
 from src.rendering.scene_3d.cell_spheres import CellSpheresRenderer
 from src.rendering.scene_3d.connectivity_lines import ConnectivityLines
+from src.rendering.scene_3d.layer_trace_strips import (
+    LayerTraceStrips,
+    allocate_trace_buffers,
+)
 from src.rendering.scene_3d.signal_flow_slabs import LayerSlab, create_slabs
-from src.rendering.scene_3d.slice_plane import SlicePlaneRenderer
 from src.simulation.state import SimState
 
 
 @dataclass
 class RenderContext:
-    """Signal Flow Column: slabs, connectivity, cells, slice, MSAA, bloom."""
+    """Signal Flow Column: slabs, connectivity, cells, layer trace strips, bloom, blur."""
 
     size: Tuple[int, int] = (1024, 1024)
     config: GlobalConfig | None = None
@@ -34,31 +36,43 @@ class RenderContext:
     ctx: moderngl.Context = field(init=False)
     fbo_msaa: Optional[moderngl.Framebuffer] = field(default=None, init=False)
     fbo_resolve: Optional[moderngl.Framebuffer] = field(default=None, init=False)
+    fbo_blur: Optional[moderngl.Framebuffer] = field(default=None, init=False)
+    _blur_vao: Optional[moderngl.VertexArray] = field(default=None, init=False)
+    _blur_program: Optional[moderngl.Program] = field(default=None, init=False)
 
     slabs: Dict[str, LayerSlab] = field(default_factory=dict, init=False)
     camera: OrbitCamera = field(default_factory=OrbitCamera, init=False)
     cell_spheres: Optional[CellSpheresRenderer] = field(default=None, init=False)
     connectivity: Optional[ConnectivityLines] = field(default=None, init=False)
-    slice_renderer: Optional[SlicePlaneRenderer] = field(default=None, init=False)
+    layer_trace_strips: Optional[LayerTraceStrips] = field(default=None, init=False)
+    trace_buffers: Optional[np.ndarray] = field(default=None, init=False)  # (num_layers, slab_height_px, T)
 
     show_cells: bool = True
     show_connectivity: bool = True
+    show_cone_to_horizontal: bool = True
+    show_cone_to_bipolar: bool = True
+    show_bipolar_to_amacrine: bool = True
+    show_bipolar_to_rgc: bool = True
     slice_x: float = 0.0
+    connectivity_dirty: bool = False
     _slab_layout: list = field(default_factory=list, init=False)
+    _slab_dirty_key: Dict[str, str] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         self.ctx = moderngl.create_standalone_context()
         self._resize(*self.size)
 
     def _resize(self, width: int, height: int) -> None:
-        # Single-sample FBO only (MSAA + standalone context + readback is unreliable)
+        # Single-sample FBO (no MSAA); second FBO for box-blur post-pass
         color_tex = self.ctx.texture((width, height), 4)
         depth_rb = self.ctx.depth_renderbuffer((width, height))
         self.fbo_msaa = self.ctx.framebuffer(
             color_attachments=[color_tex],
             depth_attachment=depth_rb,
         )
-        self.fbo_resolve = self.fbo_msaa  # same FBO, no resolve needed
+        self.fbo_resolve = self.fbo_msaa
+        blur_tex = self.ctx.texture((width, height), 4)
+        self.fbo_blur = self.ctx.framebuffer(color_attachments=[blur_tex])
         self.ctx.enable(moderngl.DEPTH_TEST | moderngl.CULL_FACE)
 
     @property
@@ -71,8 +85,13 @@ class RenderContext:
         self._slab_layout = list(signal_flow_slab_layout())
         self.slabs = create_slabs(self.ctx, state)
         self.connectivity = ConnectivityLines(self.ctx, self._slab_layout, subsample=8)
-        self.slice_renderer = SlicePlaneRenderer(self.ctx)
-        self.cell_spheres = CellSpheresRenderer(self.ctx, subsample=4)
+        slab_height_px = 64
+        self.layer_trace_strips = LayerTraceStrips(
+            self.ctx, self._slab_layout, slab_height_px=slab_height_px
+        )
+        self.trace_buffers = allocate_trace_buffers(len(self._slab_layout), slab_height_px)
+        subsample = getattr(state.config, "cell_subsample", 8) if state.config else 8
+        self.cell_spheres = CellSpheresRenderer(self.ctx, subsample=subsample)
 
     def update_from_state(self, state: SimState) -> None:
         self.ensure_scene(state)
@@ -91,21 +110,85 @@ class RenderContext:
             "Amacrine": state.amacrine_aii,
             "RGC": state.fr_midget_on_L,
         }
+        if not self._slab_dirty_key:
+            self._slab_dirty_key = {
+                "Stimulus": "cone_L",  # no single key for stimulus; use cone_L as proxy for "any update"
+                "Cones": "cone_L",
+                "Horizontal": "h_activation",
+                "Bipolar": "bp_diffuse_on",
+                "Amacrine": "amacrine_aii",
+                "RGC": "fr_midget_on_L",
+            }
         for label, slab in self.slabs.items():
+            dirty_key = self._slab_dirty_key.get(label)
+            if dirty_key is not None and not state.dirty_flags.get(dirty_key, True):
+                continue
             grid = mapping.get(label)
             if grid is not None:
                 slab.update_from_grid(grid)
+            if dirty_key is not None:
+                state.dirty_flags[dirty_key] = False
+        if self.layer_trace_strips is not None and self.trace_buffers is not None:
+            self.layer_trace_strips.update_buffers(state, self.slice_x, self.trace_buffers)
 
-    def _bloom_pass(self, img: np.ndarray, threshold: float = 0.8) -> np.ndarray:
-        """Simple bloom: 3x3 Gaussian blur on bright pixels."""
-        f = img.astype(np.float32) / 255.0
-        mask = np.any(f[..., :3] > threshold, axis=-1, keepdims=True)
-        blurred = np.zeros_like(f)
-        for c in range(3):
-            ch = f[..., c]
-            blurred[..., c] = gaussian_filter(ch, sigma=1.0)
-        out = np.where(mask, blurred, f)
-        return (np.clip(out, 0, 1) * 255).astype(np.uint8)
+    def _ensure_blur_resources(self, width: int, height: int) -> None:
+        if self._blur_program is not None:
+            return
+        self._blur_program = self.ctx.program(
+            vertex_shader="""
+                #version 330
+                in vec2 in_uv;
+                out vec2 v_uv;
+                void main() {
+                    v_uv = in_uv;
+                    gl_Position = vec4(in_uv * 2.0 - 1.0, 0.0, 1.0);
+                }
+            """,
+            fragment_shader="""
+                #version 330
+                uniform sampler2D u_tex;
+                uniform vec2 u_texel_size;
+                in vec2 v_uv;
+                out vec4 fragColor;
+                void main() {
+                    vec4 sum = texture(u_tex, v_uv);
+                    sum += texture(u_tex, v_uv + vec2(-1,-1) * u_texel_size);
+                    sum += texture(u_tex, v_uv + vec2( 0,-1) * u_texel_size);
+                    sum += texture(u_tex, v_uv + vec2( 1,-1) * u_texel_size);
+                    sum += texture(u_tex, v_uv + vec2(-1, 0) * u_texel_size);
+                    sum += texture(u_tex, v_uv + vec2( 1, 0) * u_texel_size);
+                    sum += texture(u_tex, v_uv + vec2(-1, 1) * u_texel_size);
+                    sum += texture(u_tex, v_uv + vec2( 0, 1) * u_texel_size);
+                    sum += texture(u_tex, v_uv + vec2( 1, 1) * u_texel_size);
+                    fragColor = sum / 9.0;
+                }
+            """,
+        )
+        quad = np.array([0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0], dtype=np.float32)
+        vbo = self.ctx.buffer(quad.tobytes())
+        self._blur_vao = self.ctx.vertex_array(
+            self._blur_program,
+            [(vbo, "2f", "in_uv")],
+        )
+
+    def _blur_pass(self, width: int, height: int) -> None:
+        """3×3 box blur: render from fbo_msaa to fbo_blur."""
+        self._ensure_blur_resources(width, height)
+        self.ctx.disable(moderngl.DEPTH_TEST)
+        self.fbo_blur.use()
+        self.fbo_msaa.color_attachments[0].use(location=0)
+        self._blur_program["u_tex"].value = 0
+        self._blur_program["u_texel_size"].value = (1.0 / width, 1.0 / height)
+        self._blur_vao.render(moderngl.TRIANGLES, vertices=6)
+        self.ctx.enable(moderngl.DEPTH_TEST)
+
+    def _read_fbo_to_uint8(self, width: int, height: int, from_blur: bool = False) -> np.ndarray:
+        """Read FBO to uint8 RGBA (flip Y for display). from_blur=True reads fbo_blur."""
+        fbo = self.fbo_blur if from_blur and self.fbo_blur else self.fbo_msaa
+        fbo.use()
+        data = fbo.color_attachments[0].read()
+        img = np.frombuffer(data, dtype=np.uint8).reshape((height, width, 4))
+        return np.flipud(img)
 
     def render_3d(self, state: SimState) -> np.ndarray:
         """Render Signal Flow Column, resolve MSAA, apply bloom, return uint8 RGBA."""
@@ -124,28 +207,36 @@ class RenderContext:
         for slab in self.slabs.values():
             slab.draw(mvp, fog_near, fog_far)
 
-        # 2. Connectivity lines
+        # 2. Connectivity lines (four types, toggles + weights)
         if self.show_connectivity and self.connectivity is not None:
-            self.connectivity.draw(state, mvp)
+            cw = getattr(state.config, "connectivity_weights", None) if state.config else None
+            show_ch = getattr(self, "show_cone_to_horizontal", True)
+            show_cb = getattr(self, "show_cone_to_bipolar", True)
+            show_ba = getattr(self, "show_bipolar_to_amacrine", True)
+            show_br = getattr(self, "show_bipolar_to_rgc", True)
+            self.connectivity.draw(
+                state, mvp, self.slice_x, self.connectivity_dirty,
+                show_cone_to_horizontal=show_ch,
+                show_cone_to_bipolar=show_cb,
+                show_bipolar_to_amacrine=show_ba,
+                show_bipolar_to_rgc=show_br,
+                weights=cw,
+            )
+            self.connectivity_dirty = False
 
         # 3. Cell spheres (solid)
         if self.show_cells and self.cell_spheres is not None:
             self.cell_spheres.draw(state, mvp, field_size)
 
-        # 4. Cell spheres bloom pass
+        # 4. Cell spheres additive bloom (1.8× radius, 0.12 alpha, GPU only)
         if self.show_cells and self.cell_spheres is not None:
             self.cell_spheres.draw_bloom(state, mvp, field_size)
 
-        # 5. Slice plane line graph
-        if self.slice_renderer is not None:
-            self.slice_renderer.draw(state, mvp, self.slice_x)
+        # 5. Per-layer trace strips (right of each slab)
+        if self.layer_trace_strips is not None and self.trace_buffers is not None:
+            self.layer_trace_strips.draw(mvp, self.trace_buffers, fog_near, fog_far)
 
-        self.fbo_msaa.use()
-        data = self.fbo_msaa.color_attachments[0].read()
-        img = np.frombuffer(data, dtype=np.uint8).reshape((height, width, 4))
-        img = np.flipud(img)
-
-        # Bloom post-pass (numpy)
-        img = self._bloom_pass(img, threshold=0.8)
-
+        # 6. 3×3 box blur fullscreen post-pass (single draw)
+        self._blur_pass(width, height)
+        img = self._read_fbo_to_uint8(width, height, from_blur=True)
         return img

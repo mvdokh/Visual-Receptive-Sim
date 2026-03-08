@@ -88,7 +88,7 @@ class CellSpheresRenderer:
     """Renders subsampled grid cells as instanced spheres. Inside slabs, radius by activity, optional bloom."""
 
     ctx: moderngl.Context
-    subsample: int = 4
+    subsample: int = 8
     radius_min: float = 0.008
     radius_max: float = 0.025
 
@@ -194,7 +194,7 @@ class CellSpheresRenderer:
         self._vao.render(moderngl.TRIANGLES, instances=len(inst))
 
     def draw_bloom(self, state, mvp: np.ndarray, field_size: float = 1.0) -> None:
-        """Second pass: 2x radius, 0.15 alpha, additive blend (glow)."""
+        """Second pass: 1.8× radius, 0.12 alpha, additive blend (GPU-only bloom)."""
         self._ensure_resources()
         inst = self.build_instances(state, field_size)
         if inst.size == 0:
@@ -202,8 +202,8 @@ class CellSpheresRenderer:
         self._instance_buffer.write(inst.tobytes())
         prog = self._vao.program
         prog["u_mvp"].write(mvp.T.tobytes())
-        prog["u_radius_scale"].value = 2.0
-        prog["u_alpha"].value = 0.15
+        prog["u_radius_scale"].value = 1.8
+        prog["u_alpha"].value = 0.12
         self.ctx.enable(moderngl.BLEND)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE
         self._vao.render(moderngl.TRIANGLES, instances=len(inst))

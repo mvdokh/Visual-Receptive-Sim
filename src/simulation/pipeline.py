@@ -85,15 +85,19 @@ def tick(state: SimState, dt: float) -> None:
     state.cone_M = np.einsum("hwl,l->hw", stim, SENS_M, optimize=True)
     state.cone_S = np.einsum("hwl,l->hw", stim, SENS_S, optimize=True)
 
-    # 3. Horizontal cell pooling
+    # 3. Horizontal cell pooling (cone_to_horizontal scales cone input)
+    cw = getattr(cfg, "connectivity_weights", None)
+    cone_to_h = cw.cone_to_horizontal if cw else 1.0
     sigma_H = cfg.horizontal.sigma_lm_deg / cfg.retina.dx_deg
     sigma_H_s = cfg.horizontal.sigma_s_deg / cfg.retina.dx_deg
-    cone_lm = state.cone_L + state.cone_M
+    cone_lm = (state.cone_L + state.cone_M) * cone_to_h
+    cone_s_in = state.cone_S * cone_to_h
 
     h_lm = gaussian_filter(cone_lm, sigma=sigma_H, mode="reflect")
-    h_s = gaussian_filter(state.cone_S, sigma=sigma_H_s, mode="reflect")
+    h_s = gaussian_filter(cone_s_in, sigma=sigma_H_s, mode="reflect")
+    h_to_cone = cw.horizontal_to_cone if cw else 1.0
     state.h_activation = (
-        h_lm * cfg.horizontal.alpha_lm + h_s * cfg.horizontal.alpha_s
+        h_lm * cfg.horizontal.alpha_lm * h_to_cone + h_s * cfg.horizontal.alpha_s * h_to_cone
     )
 
     # 4. Horizontal → cone feedback (surround)
@@ -101,37 +105,43 @@ def tick(state: SimState, dt: float) -> None:
     state.cone_M_eff = state.cone_M - cfg.horizontal.alpha_lm * state.h_activation
     state.cone_S_eff = state.cone_S - cfg.horizontal.alpha_s * state.h_activation
 
-    # 5. Bipolar responses (midget and diffuse)
+    # 5. Bipolar responses (cone_to_bipolar scales effective cone input)
+    cone_to_bp = cw.cone_to_bipolar if cw else 1.0
     sigma_diffuse = cfg.bipolar.sigma_diffuse_deg / cfg.retina.dx_deg
-    cone_lm_eff = state.cone_L_eff + state.cone_M_eff
+    cone_lm_eff = (state.cone_L_eff + state.cone_M_eff) * cone_to_bp
 
-    state.bp_midget_on_L = np.maximum(0.0, state.cone_L_eff)
-    state.bp_midget_off_L = np.maximum(0.0, -state.cone_L_eff)
-    state.bp_midget_on_M = np.maximum(0.0, state.cone_M_eff)
-    state.bp_midget_off_M = np.maximum(0.0, -state.cone_M_eff)
+    state.bp_midget_on_L = np.maximum(0.0, state.cone_L_eff * cone_to_bp)
+    state.bp_midget_off_L = np.maximum(0.0, -state.cone_L_eff * cone_to_bp)
+    state.bp_midget_on_M = np.maximum(0.0, state.cone_M_eff * cone_to_bp)
+    state.bp_midget_off_M = np.maximum(0.0, -state.cone_M_eff * cone_to_bp)
 
     pooled = gaussian_filter(cone_lm_eff, sigma=sigma_diffuse, mode="reflect")
     state.bp_diffuse_on = np.maximum(0.0, pooled)
     state.bp_diffuse_off = np.maximum(0.0, -pooled)
 
-    # 6. Amacrine lateral inhibition
+    # 6. Amacrine lateral inhibition (bipolar_to_amacrine, amacrine_to_bipolar)
+    bp_to_am = cw.bipolar_to_amacrine if cw else 1.0
+    am_to_bp = cw.amacrine_to_bipolar if cw else 1.0
     sigma_aii = cfg.amacrine.sigma_aii_deg / cfg.retina.dx_deg
     sigma_wide = cfg.amacrine.sigma_wide_deg / cfg.retina.dx_deg
 
     state.amacrine_aii = gaussian_filter(
-        state.bp_midget_on_L + state.bp_midget_on_M, sigma=sigma_aii, mode="reflect"
+        (state.bp_midget_on_L + state.bp_midget_on_M) * bp_to_am, sigma=sigma_aii, mode="reflect"
     )
-    state.amacrine_wide = gaussian_filter(cone_lm_eff, sigma=sigma_wide, mode="reflect")
+    state.amacrine_wide = gaussian_filter(cone_lm_eff * bp_to_am, sigma=sigma_wide, mode="reflect")
 
     total_amacrine = (
-        cfg.amacrine.gamma_aii * state.amacrine_aii
-        + cfg.amacrine.gamma_wide * state.amacrine_wide
+        cfg.amacrine.gamma_aii * am_to_bp * state.amacrine_aii
+        + cfg.amacrine.gamma_wide * am_to_bp * state.amacrine_wide
     )
 
-    # 7. RGC generators (Gaussian dendritic field)
+    # 7. RGC generators (bipolar_to_rgc scales drive)
+    bp_to_rgc = cw.bipolar_to_rgc if cw else 1.0
+
     def rgc_generator(bp_grid: np.ndarray, sigma_deg: float) -> np.ndarray:
         sigma_px = sigma_deg / cfg.retina.dx_deg
-        return gaussian_filter(bp_grid - total_amacrine, sigma=sigma_px, mode="reflect")
+        drive = (bp_grid - total_amacrine) * bp_to_rgc
+        return gaussian_filter(drive, sigma=sigma_px, mode="reflect")
 
     state.rgc_midget_on_L = rgc_generator(
         state.bp_midget_on_L, cfg.dendritic.sigma_midget_deg

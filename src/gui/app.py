@@ -7,6 +7,7 @@ Dear PyGui application wiring together:
 - Control / analysis panels
 """
 
+import random
 from pathlib import Path
 from typing import Tuple
 
@@ -302,6 +303,11 @@ def _build_left_panel(state: SimState) -> None:
             dpg.add_checkbox(label="Show signal flow", default_value=True, tag="show_signal_flow")
             dpg.add_slider_float(label="Slice position", min_value=-0.5, max_value=0.5, default_value=0.0,
                 tag="slice_position")
+            dpg.add_text("Connectivity types")
+            dpg.add_checkbox(label="Cone → Horizontal", default_value=True, tag="show_cone_to_horizontal")
+            dpg.add_checkbox(label="Cone → Bipolar", default_value=True, tag="show_cone_to_bipolar")
+            dpg.add_checkbox(label="Bipolar → Amacrine", default_value=True, tag="show_bipolar_to_amacrine")
+            dpg.add_checkbox(label="Bipolar → RGC", default_value=True, tag="show_bipolar_to_rgc")
             dpg.add_slider_float(
                 label="Azimuth (rad)",
                 min_value=-3.14,
@@ -339,6 +345,51 @@ def _build_left_panel(state: SimState) -> None:
                         dpg.add_checkbox(label=name, default_value=True, tag=f"layer_vis_{name}")
                         dpg.add_slider_float(width=80, min_value=0.0, max_value=1.0, default_value=0.85, tag=f"layer_opacity_{name}")
 
+def _set_conn_weight(state: SimState, key: str, value: float) -> None:
+    if hasattr(state.config, "connectivity_weights"):
+        setattr(state.config.connectivity_weights, key, max(0.0, min(3.0, value)))
+
+
+def _set_connectivity_dirty() -> None:
+    _shared["connectivity_dirty"] = True
+
+
+def _reset_connectivity_weights(state: SimState) -> None:
+    cw = state.config.connectivity_weights
+    for key in ("cone_to_horizontal", "cone_to_bipolar", "horizontal_to_cone",
+                "bipolar_to_amacrine", "amacrine_to_bipolar", "bipolar_to_rgc"):
+        setattr(cw, key, 1.0)
+    for tag, key in [
+        ("conn_cone_to_horizontal", "cone_to_horizontal"),
+        ("conn_cone_to_bipolar", "cone_to_bipolar"),
+        ("conn_horizontal_to_cone", "horizontal_to_cone"),
+        ("conn_bipolar_to_amacrine", "bipolar_to_amacrine"),
+        ("conn_amacrine_to_bipolar", "amacrine_to_bipolar"),
+        ("conn_bipolar_to_rgc", "bipolar_to_rgc"),
+    ]:
+        if dpg.does_item_exist(tag):
+            dpg.set_value(tag, getattr(cw, key))
+    _shared["connectivity_dirty"] = True
+
+
+def _randomize_connectivity_weights(state: SimState) -> None:
+    cw = state.config.connectivity_weights
+    for key in ("cone_to_horizontal", "cone_to_bipolar", "horizontal_to_cone",
+                "bipolar_to_amacrine", "amacrine_to_bipolar", "bipolar_to_rgc"):
+        setattr(cw, key, random.uniform(0.5, 2.0))
+    for tag, key in [
+        ("conn_cone_to_horizontal", "cone_to_horizontal"),
+        ("conn_cone_to_bipolar", "cone_to_bipolar"),
+        ("conn_horizontal_to_cone", "horizontal_to_cone"),
+        ("conn_bipolar_to_amacrine", "bipolar_to_amacrine"),
+        ("conn_amacrine_to_bipolar", "amacrine_to_bipolar"),
+        ("conn_bipolar_to_rgc", "bipolar_to_rgc"),
+    ]:
+        if dpg.does_item_exist(tag):
+            dpg.set_value(tag, getattr(cw, key))
+    _shared["connectivity_dirty"] = True
+
+
 def _build_right_panel(state: SimState) -> None:
     """Right panel: tab bar so Stats, Export, RF each fit without scrolling."""
     with dpg.child_window(width=PANEL_WIDTH, height=-1, border=True, autosize_x=False):
@@ -369,6 +420,23 @@ def _build_right_panel(state: SimState) -> None:
                 dpg.add_button(label="Save screenshot (PNG)", tag="btn_export_png", callback=lambda: dpg.show_item("file_dialog_png"))
                 dpg.add_button(label="Save layer stats (CSV)", tag="btn_export_csv", callback=lambda: dpg.show_item("file_dialog_csv"))
                 dpg.add_button(label="Save layer grids (.npy)", tag="btn_export_npy", callback=lambda: dpg.show_item("file_dialog_npy"))
+            with dpg.tab(label="Connectivity"):
+                dpg.add_text("Weight matrix (0.0–3.0). Changes apply to pipeline and 3D lines.")
+                cw = state.config.connectivity_weights
+                dpg.add_input_float(label="Cone → Horizontal", default_value=cw.cone_to_horizontal, min_value=0.0, max_value=3.0, min_clamped=True, max_clamped=True, width=60, tag="conn_cone_to_horizontal",
+                    callback=lambda s, a: (_set_conn_weight(state, "cone_to_horizontal", a), _set_connectivity_dirty()))
+                dpg.add_input_float(label="Cone → Bipolar", default_value=cw.cone_to_bipolar, min_value=0.0, max_value=3.0, min_clamped=True, max_clamped=True, width=60, tag="conn_cone_to_bipolar",
+                    callback=lambda s, a: (_set_conn_weight(state, "cone_to_bipolar", a), _set_connectivity_dirty()))
+                dpg.add_input_float(label="Horizontal → Cone", default_value=cw.horizontal_to_cone, min_value=0.0, max_value=3.0, min_clamped=True, max_clamped=True, width=60, tag="conn_horizontal_to_cone",
+                    callback=lambda s, a: (_set_conn_weight(state, "horizontal_to_cone", a), _set_connectivity_dirty()))
+                dpg.add_input_float(label="Bipolar → Amacrine", default_value=cw.bipolar_to_amacrine, min_value=0.0, max_value=3.0, min_clamped=True, max_clamped=True, width=60, tag="conn_bipolar_to_amacrine",
+                    callback=lambda s, a: (_set_conn_weight(state, "bipolar_to_amacrine", a), _set_connectivity_dirty()))
+                dpg.add_input_float(label="Amacrine → Bipolar", default_value=cw.amacrine_to_bipolar, min_value=0.0, max_value=3.0, min_clamped=True, max_clamped=True, width=60, tag="conn_amacrine_to_bipolar",
+                    callback=lambda s, a: (_set_conn_weight(state, "amacrine_to_bipolar", a), _set_connectivity_dirty()))
+                dpg.add_input_float(label="Bipolar → RGC", default_value=cw.bipolar_to_rgc, min_value=0.0, max_value=3.0, min_clamped=True, max_clamped=True, width=60, tag="conn_bipolar_to_rgc",
+                    callback=lambda s, a: (_set_conn_weight(state, "bipolar_to_rgc", a), _set_connectivity_dirty()))
+                dpg.add_button(label="Reset to defaults", tag="conn_reset", callback=lambda: _reset_connectivity_weights(state))
+                dpg.add_button(label="Randomize", tag="conn_randomize", callback=lambda: _randomize_connectivity_weights(state))
             with dpg.tab(label="Receptive Field"):
                 dpg.add_combo(label="RGC type", items=["midget_on_L", "midget_off_L", "parasol_on", "parasol_off"], default_value="midget_on_L", tag="rf_rgc_type")
                 dpg.add_button(label="Compute RF (24x24 sweep)", tag="btn_compute_rf", callback=lambda: _shared.update({"rf_pending": True}))
@@ -424,7 +492,10 @@ def _update_stats(state: SimState) -> None:
         flat = flat[np.isfinite(flat)]
         if len(flat) > 0:
             bins = 16
-            counts, edges = np.histogram(flat, bins=bins)
+            mn, mx = float(np.min(flat)), float(np.max(flat))
+            if mx <= mn:
+                mx = mn + 1.0  # avoid "too many bins for data range"
+            counts, edges = np.histogram(flat, bins=bins, range=(mn, mx))
             xs = [(float(edges[i]) + float(edges[i + 1])) / 2 for i in range(bins)]
             counts_list = [float(c) for c in counts]
             dpg.set_value("hist_series", [xs, counts_list])
@@ -597,6 +668,7 @@ def run_app() -> None:
     _shared["last_frame"] = None
     _shared["rf_pending"] = False
     _shared["render_ctx"] = None
+    _shared["connectivity_dirty"] = False
     _shared["last_mouse_pos"] = None  # for 3D orbit
     _shared["wheel_delta"] = 0  # accumulated scroll (consumed each frame when viewport hovered)
     _shared["frame_count"] = 0  # for deferred resize at startup
@@ -699,6 +771,17 @@ def run_app() -> None:
                 ctx.show_connectivity = dpg.get_value("show_signal_flow")
             if dpg.does_item_exist("slice_position"):
                 ctx.slice_x = dpg.get_value("slice_position")
+            if dpg.does_item_exist("show_cone_to_horizontal"):
+                ctx.show_cone_to_horizontal = dpg.get_value("show_cone_to_horizontal")
+            if dpg.does_item_exist("show_cone_to_bipolar"):
+                ctx.show_cone_to_bipolar = dpg.get_value("show_cone_to_bipolar")
+            if dpg.does_item_exist("show_bipolar_to_amacrine"):
+                ctx.show_bipolar_to_amacrine = dpg.get_value("show_bipolar_to_amacrine")
+            if dpg.does_item_exist("show_bipolar_to_rgc"):
+                ctx.show_bipolar_to_rgc = dpg.get_value("show_bipolar_to_rgc")
+            if _shared.get("connectivity_dirty"):
+                ctx.connectivity_dirty = True
+                _shared["connectivity_dirty"] = False
             # Camera: smooth lerp
             ctx.camera.integrate(dt)
             # Mouse: drag (0.25 sensitivity), scroll zoom
