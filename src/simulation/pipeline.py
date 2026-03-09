@@ -65,9 +65,13 @@ def tick(state: SimState, dt: float) -> None:
     cfg: GlobalConfig = state.config
     state.time += dt
 
-    # 1. Stimulus spectrum grid (H, W, L)
+    # 1. Stimulus spectrum grid (H, W, L); pass retina so 1° scales with grid
     state.stimulus_spectrum = build_stimulus_spectrum(
-        state.stimulus_params, cfg.spectral, state.grid_shape(), time_s=state.time
+        state.stimulus_params,
+        cfg.spectral,
+        state.grid_shape(),
+        time_s=state.time,
+        retina=cfg.retina,
     )
 
     # 2. Cone responses via spectral dot product

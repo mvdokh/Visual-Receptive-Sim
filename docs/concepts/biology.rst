@@ -71,6 +71,22 @@ bipolar ~41%, amacrine ~39%, Müller glia ~16%, horizontal ~3%
 cells over horizontal cells is reflected in the relative layer
 densities rendered in both viewers.
 
+Physical scale and large-field simulation
+------------------------------------------
+
+For large-field mode (e.g. 2048×2048 px at 4 µm/px ≈ 28° patch), scale parameters in
+``bio_constants.py`` are grounded in the following:
+
+- **Drasdo & Fowler (1974)** — 1° of visual angle ≈ 290 µm on the human retina
+  (``MICRONS_PER_DEGREE``). Used to convert grid extent to degrees.
+- **Curcio & Allen (1990)** — RGC density by eccentricity; parasol ~150 cells/mm²,
+  midget ~600 cells/mm² at ~10° (used for sparse RGC lattice spacing).
+- **Dacey (1993)** — Midget/parasol dendritic field scaling with eccentricity.
+- **Watanabe & Rodieck (1989)** — Parasol dendritic field diameter ≈ 100 + 20×ecc (µm).
+
+Eccentricity-dependent formulas (e.g. parasol radius, midget radius) are implemented
+in ``src/simulation/scale.py``.
+
 References
 ----------
 

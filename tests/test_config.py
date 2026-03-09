@@ -5,6 +5,7 @@ import pytest
 
 from src.config import (
     default_config,
+    large_field_config,
     layer_z_positions,
     signal_flow_slab_layout,
     RetinaGeometry,
@@ -50,3 +51,13 @@ def test_global_config_has_all_subconfigs():
     assert hasattr(cfg, "spectral") and cfg.spectral.wavelengths is not None
     assert hasattr(cfg, "horizontal") and cfg.horizontal.alpha_lm == 0.7
     assert hasattr(cfg, "connectivity_weights")
+
+
+def test_retina_geometry_microns_and_large_field():
+    """RetinaGeometry has microns_per_px and grid_size_degrees_physical."""
+    r = RetinaGeometry(field_size_deg=1.0, grid_resolution=256, microns_per_px=4.0)
+    assert r.microns_per_px == 4.0
+    assert r.grid_size_microns == 256 * 4.0
+    cfg = large_field_config()
+    assert cfg.retina.grid_resolution >= 1024
+    assert cfg.retina.field_size_deg > 10.0

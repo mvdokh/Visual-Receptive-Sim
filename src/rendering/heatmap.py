@@ -3,11 +3,45 @@ from __future__ import annotations
 """
 Utilities to convert NumPy activation grids into RGBA textures
 for consumption by ModernGL and Dear PyGui.
+Block-average downsampling for large-field display at screen resolution.
 """
 
-from typing import Literal
+from typing import Literal, Tuple
 
 import numpy as np
+
+
+def block_average_downsample(grid: np.ndarray, max_side: int = 1024) -> np.ndarray:
+    """
+    Downsample grid to at most max_side per dimension using block-average.
+    Never use nearest-neighbor (biologically meaningless aliasing).
+    """
+    h, w = grid.shape
+    if h <= max_side and w <= max_side:
+        return grid
+    factor_h = max(1, (h + max_side - 1) // max_side)
+    factor_w = max(1, (w + max_side - 1) // max_side)
+    # Pad to multiple
+    h2 = (h // factor_h) * factor_h
+    w2 = (w // factor_w) * factor_w
+    g = grid[:h2, :w2].astype(np.float32)
+    new_h, new_w = h2 // factor_h, w2 // factor_w
+    out = g.reshape(new_h, factor_h, new_w, factor_w).mean(axis=(1, 3))
+    return out.astype(np.float32)
+
+
+def block_average_downsample_rgba(rgba: np.ndarray, max_side: int = 1024) -> np.ndarray:
+    """Downsample (H, W, 4) RGBA to at most max_side per dimension using block-average."""
+    h, w = rgba.shape[0], rgba.shape[1]
+    if h <= max_side and w <= max_side:
+        return rgba
+    factor_h = max(1, (h + max_side - 1) // max_side)
+    factor_w = max(1, (w + max_side - 1) // max_side)
+    h2, w2 = (h // factor_h) * factor_h, (w // factor_w) * factor_w
+    g = rgba[:h2, :w2]
+    new_h, new_w = h2 // factor_h, w2 // factor_w
+    out = g.reshape(new_h, factor_h, new_w, factor_w, 4).mean(axis=(1, 3))
+    return out.astype(np.float32)
 
 ColormapName = Literal["biphasic", "firing", "spectral", "diverging"]
 

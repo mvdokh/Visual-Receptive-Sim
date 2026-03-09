@@ -7,9 +7,20 @@ Dear PyGui application wiring together:
 - Control / analysis panels
 """
 
+import os
 import random
+import threading
+import time
 from pathlib import Path
 from typing import Tuple
+
+# Run simulation on main thread (no background worker) for smoother 60 FPS; set SIM_ON_MAIN_THREAD=1
+SIM_ON_MAIN_THREAD = os.environ.get("SIM_ON_MAIN_THREAD", "").strip().lower() in ("1", "true", "yes")
+# Tick every Nth frame when on main thread to hit 60 FPS (SIM_TICK_EVERY_N=2 → 30 Hz sim)
+SIM_TICK_EVERY_N = max(1, int(os.environ.get("SIM_TICK_EVERY_N", "1")))
+
+# Cap main loop at this FPS to reduce CPU use and keep UI responsive
+TARGET_FPS = 60
 
 import dearpygui.dearpygui as dpg
 import numpy as np
@@ -22,7 +33,27 @@ DISPLAY_SCALE = 4
 from src.config import default_config
 from src.rendering import RenderContext
 from src.rendering.scene_3d.camera import ELEVATION_MAX, DEFAULT_AZIMUTH, DEFAULT_ELEVATION
-from src.rendering.heatmap import grid_to_rgba, spectrum_to_stimulus_rgba
+from src.rendering.heatmap import (
+    block_average_downsample,
+    block_average_downsample_rgba,
+    grid_to_rgba,
+    spectrum_to_stimulus_rgba,
+)
+from src.rendering.overlay import draw_cell_overlay
+from src.simulation.cell_positions import (
+    CellPositions,
+    pick_nearest_cell_any_layer,
+)
+from src.simulation.connectivity import (
+    ConnectivityCache,
+    RGCConnectivityResult,
+    compute_amacrine_connectivity,
+    compute_bipolar_connectivity,
+    compute_cone_connectivity,
+    compute_horizontal_connectivity,
+    compute_rgc_connectivity,
+)
+from src.gui.panels.cell_inspector import update_inspector
 from src.gui.panels.data_export import (
     export_screenshot_png,
     export_layer_grids_csv,
@@ -102,6 +133,30 @@ DATA_EXPORTS_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "exp
 # Shared state for export callbacks, RF compute, and mouse orbit (updated each frame)
 _shared: dict = {}
 
+# Max display resolution for 2D viewer (block-average downsampling above this)
+MAX_DISPLAY_SIDE = 1024
+
+
+def _ensure_cell_positions(state: SimState) -> CellPositions:
+    """Build or return cached CellPositions for the current grid. Uses cKDTree for O(log N) picks."""
+    cp = _shared.get("cell_positions")
+    grid_size = state.grid_shape()[0]
+    if cp is not None and cp.grid_size == grid_size:
+        return cp
+    cfg = state.config.retina
+    fovea = (grid_size / 2.0, grid_size / 2.0)
+    cp = CellPositions(
+        grid_size=grid_size,
+        microns_per_px=cfg.microns_per_px,
+        fovea_center=fovea,
+    )
+    cone_subsample = 4 if grid_size > 512 else 1  # fewer cone points for huge grids
+    cp.init_default(cone_subsample=cone_subsample)
+    _shared["cell_positions"] = cp
+    if "connectivity_cache" not in _shared:
+        _shared["connectivity_cache"] = ConnectivityCache()
+    return cp
+
 
 def _update_stimulus_visibility(stim_type: str, state: SimState | None = None) -> None:
     """Show/hide stimulus controls based on type so only relevant sliders are visible."""
@@ -157,6 +212,8 @@ def _update_stimulus_visibility(stim_type: str, state: SimState | None = None) -
         "moving_spot": ["stim_radius", "stim_x_deg", "stim_y_deg", "stim_vx", "stim_vy"],
         "moving_bar": ["stim_x_deg", "stim_y_deg", "stim_orientation", "stim_width", "stim_vx", "stim_vy"],
         "moving_grating": ["stim_x_deg", "stim_y_deg", "stim_orientation", "stim_spatial_freq", "stim_phase", "stim_vx", "stim_vy"],
+        "expanding_ring": ["stim_radius", "stim_x_deg", "stim_y_deg"],
+        "drifting_grating_full": ["stim_orientation", "stim_spatial_freq", "stim_phase", "stim_vx", "stim_vy"],
         "dual_spot": [
             "stim_radius",
             "stim_x_deg",
@@ -175,13 +232,18 @@ def _update_stimulus_visibility(stim_type: str, state: SimState | None = None) -
 
 
 def _update_view_mode_ui(mode: str) -> None:
-    """Show 3D-only controls only when 3D view is active."""
+    """Show 3D-only controls when 3D view is active; hide Pick layer combo in 2D."""
     is_3d = mode == "3D Stack"
     if dpg.does_item_exist("camera_3d_node"):
         if is_3d:
             dpg.show_item("camera_3d_node")
         else:
             dpg.hide_item("camera_3d_node")
+    if dpg.does_item_exist("pick_layer_combo"):
+        if is_3d:
+            dpg.show_item("pick_layer_combo")
+        else:
+            dpg.hide_item("pick_layer_combo")
 
 
 def _reset_camera(preset: str) -> None:
@@ -227,6 +289,12 @@ def _build_left_panel(state: SimState) -> None:
             default_value=LAYER_KEY_TO_DISPLAY.get("RGC Firing (L)", "RGC Firing (L)"),
             tag="layer_combo",
         )
+        dpg.add_combo(
+            label="Pick layer (click viewport to inspect)",
+            items=["RGC", "Cone", "Bipolar", "Horizontal", "Amacrine"],
+            default_value="RGC",
+            tag="pick_layer_combo",
+        )
         dpg.add_text("", tag="layer_convergence_note")
         dpg.add_checkbox(
             label="Show convergence ratios",
@@ -258,6 +326,8 @@ def _build_left_panel(state: SimState) -> None:
                     "moving_spot",
                     "moving_bar",
                     "moving_grating",
+                    "expanding_ring",
+                    "drifting_grating_full",
                     "dual_spot",
                     "image",
                 ],
@@ -516,6 +586,9 @@ def _build_right_panel(state: SimState) -> None:
                     callback=lambda s, a: (_set_conn_weight(state, "bipolar_to_rgc", a), _set_connectivity_dirty()))
                 dpg.add_button(label="Reset to defaults", tag="conn_reset", callback=lambda: _reset_connectivity_weights(state))
                 dpg.add_button(label="Randomize", tag="conn_randomize", callback=lambda: _randomize_connectivity_weights(state))
+            with dpg.tab(label="Inspector"):
+                from src.gui.panels.cell_inspector import build_inspector_panel
+                build_inspector_panel()
             with dpg.tab(label="Receptive Field"):
                 dpg.add_combo(label="RGC type", items=["midget_on_L", "midget_off_L", "parasol_on", "parasol_off"], default_value="midget_on_L", tag="rf_rgc_type")
                 dpg.add_button(label="Compute RF (24x24 sweep)", tag="btn_compute_rf", callback=lambda: _shared.update({"rf_pending": True}))
@@ -599,6 +672,27 @@ def _load_app_font() -> int | None:
     return None
 
 
+def _sim_worker() -> None:
+    """Background thread: tick state_back at 60 Hz and swap with state_front. Throttled so UI stays responsive."""
+    sim_dt = 1.0 / 60.0
+    target_interval = 1.0 / 60.0
+    while True:
+        try:
+            back = _shared.get("state_back")
+            if back is None:
+                time.sleep(0.016)
+                continue
+            t0 = time.perf_counter()
+            tick(back, sim_dt)
+            front = _shared.get("state_front")
+            if front is not None:
+                _shared["state_front"], _shared["state_back"] = back, front
+            elapsed = time.perf_counter() - t0
+            time.sleep(max(0.0, target_interval - elapsed))
+        except Exception:
+            time.sleep(0.016)
+
+
 def run_app() -> None:
     """Create the Dear PyGui + ModernGL app and start the main loop."""
     cfg = default_config()
@@ -615,15 +709,22 @@ def run_app() -> None:
         "phase_deg": 0.0,
         "inner_radius_deg": 0.05,
     })
+    # Second state for background tick (only when using worker); share params so UI updates apply to both
+    state_back = None
+    if not SIM_ON_MAIN_THREAD:
+        state_back = SimState(config=cfg)
+        state_back.stimulus_params = state.stimulus_params
+        state_back.config = state.config
 
     dpg.create_context()
 
     # Load modern font (Inter, SF Pro, Segoe UI, etc.)
     _shared["app_font"] = _load_app_font()
 
-    # Texture registry: display at DISPLAY_SCALE × grid resolution for visibility
+    # Texture registry: cap at MAX_DISPLAY_SIDE for large grids (block-average downsampling)
     grid_h, grid_w = state.grid_shape()
-    display_w, display_h = grid_w * DISPLAY_SCALE, grid_h * DISPLAY_SCALE
+    display_w = min(MAX_DISPLAY_SIDE, grid_w * DISPLAY_SCALE)
+    display_h = min(MAX_DISPLAY_SIDE, grid_h * DISPLAY_SCALE)
 
     with dpg.texture_registry():
         # Initialize with dark gray (matches 3D clear color) to avoid flashing on load
@@ -703,7 +804,9 @@ def run_app() -> None:
     def _on_csv(sender, app_data):
         path = app_data.get("file_path_name")
         if path:
-            export_layer_grids_csv(state, Path(path))
+            st = _shared.get("state_front") or _shared.get("state")
+            if st is not None:
+                export_layer_grids_csv(st, Path(path))
 
     def _on_npy(sender, app_data):
         # Directory selector: file_path_name or current_path
@@ -711,7 +814,9 @@ def run_app() -> None:
         if isinstance(path, (list, tuple)) and path:
             path = path[0]
         if path:
-            export_layer_grids_npy(state, Path(path))
+            st = _shared.get("state_front") or _shared.get("state")
+            if st is not None:
+                export_layer_grids_npy(st, Path(path))
 
     def _on_stim_image(sender, app_data):
         """Load an external image/photo as a stimulus mask."""
@@ -775,8 +880,13 @@ def run_app() -> None:
         dpg.add_file_extension(".jpeg")
         dpg.add_file_extension(".*")
 
-    # Shared state for main loop
-    _shared["state"] = state
+    # Shared state for main loop (double-buffer when worker used; else single state)
+    _shared["state"] = state  # legacy alias
+    _shared["state_front"] = state
+    _shared["state_back"] = state_back
+    _shared["sim_on_main_thread"] = SIM_ON_MAIN_THREAD
+    _shared["sim_tick_every_n"] = SIM_TICK_EVERY_N
+    _shared["sim_tick_counter"] = 0
     _shared["last_frame"] = None
     _shared["rf_pending"] = False
     _shared["render_ctx"] = None
@@ -785,6 +895,13 @@ def run_app() -> None:
     _shared["wheel_delta"] = 0  # accumulated scroll (consumed each frame when viewport hovered)
     _shared["frame_count"] = 0  # for deferred resize at startup
     _shared["rgc_fr_history"] = []  # for sparkline (last 100 ticks)
+    _shared["picked_cell"] = None  # (layer_name, cell_id, connectivity_result) or None
+    _shared["mouse_was_down"] = False  # for pick click detection
+    _shared["mouse_down_pos"] = None  # (x, y) when button went down; used to avoid pick on 3D drag
+    _shared["stats_tick"] = 0  # throttle stats update
+
+    if not SIM_ON_MAIN_THREAD and state_back is not None:
+        threading.Thread(target=_sim_worker, daemon=True).start()
 
     # Mouse wheel handler for 3D zoom (DPG has no get_mouse_wheel polling)
     def _on_wheel(sender, app_data):
@@ -798,6 +915,7 @@ def run_app() -> None:
     # Main loop: step simulation, render via 2D or 3D, blit into DPG dynamic texture.
     last_time = dpg.get_total_time()
     while dpg.is_dearpygui_running():
+        frame_start = time.perf_counter()
         now = dpg.get_total_time()
         dt = now - last_time
         last_time = now
@@ -842,8 +960,78 @@ def run_app() -> None:
                     pos=[pos_x, pos_y],
                 )
 
-        # Step simulation
-        tick(state, dt)
+        # Use display buffer (worker writes here) or single state (sim on main thread)
+        if _shared.get("sim_on_main_thread"):
+            state = _shared["state_front"]
+            _shared["state"] = state
+            # Tick on main thread every Nth frame to keep 60 FPS
+            ctr = _shared.get("sim_tick_counter", 0)
+            _shared["sim_tick_counter"] = (ctr + 1) % _shared.get("sim_tick_every_n", 1)
+            if ctr == 0:
+                tick(state, min(dt, 1.0 / 30.0))
+        else:
+            state = _shared["state_front"]
+            _shared["state"] = state
+
+        # Click on viewport (2D or 3D) to select cell and show connectivity in Inspector
+        mouse_down_now = dpg.is_mouse_button_down(0)
+        if mouse_down_now and not _shared.get("mouse_was_down"):
+            _shared["mouse_down_pos"] = dpg.get_mouse_pos()
+        if _shared.get("mouse_was_down") and not mouse_down_now and dpg.is_item_hovered(VIEWPORT_IMAGE_TAG):
+            # Only count as pick if mouse barely moved (avoid treating 3D camera drag as pick)
+            down_pos = _shared.get("mouse_down_pos")
+            mx, my = dpg.get_mouse_pos()
+            is_drag = False
+            if down_pos is not None:
+                dx, dy = mx - down_pos[0], my - down_pos[1]
+                if dx * dx + dy * dy > 64:  # moved more than 8 px → was a drag
+                    is_drag = True
+            if not is_drag:
+                try:
+                    rect_min = dpg.get_item_rect_min(VIEWPORT_IMAGE_TAG)
+                    rect_max = dpg.get_item_rect_max(VIEWPORT_IMAGE_TAG)
+                    mx, my = dpg.get_mouse_pos()
+                    local_x = mx - rect_min[0]
+                    local_y = my - rect_min[1]
+                    img_w = max(1, rect_max[0] - rect_min[0])
+                    img_h = max(1, rect_max[1] - rect_min[1])
+                    if 0 <= local_x < img_w and 0 <= local_y < img_h:
+                        cp = _ensure_cell_positions(state)
+                        grid_h, grid_w = state.grid_shape()
+                        grid_x = local_x / img_w * grid_w
+                        grid_y = local_y / img_h * grid_h
+                        pick_radius_px = max(20.0, grid_w / 64.0)  # scale with grid so large fields are pickable
+                        pick_layer, cell_id = pick_nearest_cell_any_layer(cp, grid_x, grid_y, pick_radius_px)
+                        cache = _shared.get("connectivity_cache")
+                        result = None
+                        if pick_layer is not None and cell_id is not None and cache is not None:
+                            result = cache.get(pick_layer, cell_id)
+                            if result is None:
+                                fovea = (grid_w / 2.0, grid_h / 2.0)
+                                microns_per_px = state.config.retina.microns_per_px
+                                if pick_layer == "RGC":
+                                    fr = float(state.fr_parasol_on[int(np.clip(grid_y, 0, grid_h - 1)), int(np.clip(grid_x, 0, grid_w - 1))]) if state.fr_parasol_on is not None else 0.0
+                                    result = compute_rgc_connectivity(cp, cell_id, fovea, firing_rate=fr)
+                                elif pick_layer == "Cone":
+                                    result = compute_cone_connectivity(cp, cell_id, fovea)
+                                elif pick_layer == "Bipolar":
+                                    act = float(state.bp_diffuse_on[int(np.clip(grid_y, 0, grid_h - 1)), int(np.clip(grid_x, 0, grid_w - 1))]) if state.bp_diffuse_on is not None else 0.0
+                                    result = compute_bipolar_connectivity(cp, cell_id, activation=act)
+                                elif pick_layer == "Horizontal":
+                                    result = compute_horizontal_connectivity(cp, cell_id)
+                                elif pick_layer == "Amacrine":
+                                    result = compute_amacrine_connectivity(cp, cell_id)
+                                if result is not None:
+                                    cache.put(pick_layer, cell_id, result)
+                            update_inspector(result, pick_layer)
+                            _shared["picked_cell"] = (pick_layer, cell_id, result)
+                        else:
+                            _shared["picked_cell"] = None
+                            update_inspector(None, pick_layer if pick_layer is not None else "RGC")
+                except Exception:
+                    pass
+        _shared["mouse_was_down"] = mouse_down_now
+        _shared["mouse_down_pos"] = None if not mouse_down_now else _shared.get("mouse_down_pos")
 
         # RF compute (runs probe sweep, can be slow)
         if _shared.get("rf_pending"):
@@ -975,16 +1163,45 @@ def run_app() -> None:
                         scale = RELATIVE_DENSITY["rgc"] / RELATIVE_DENSITY[dkey]
                         layer = np.clip(layer.astype(np.float32) * scale, 0.0, None)
                 rgba = grid_to_rgba(layer, colormap=colormap)
-            # Upscale to match texture size (display_w × display_h) to avoid flashing
-            rgba = np.repeat(np.repeat(rgba, DISPLAY_SCALE, axis=0), DISPLAY_SCALE, axis=1)
+            # Overlay: selected RGC dendritic field and cone/bipolar/amacrine scatter
+            picked = _shared.get("picked_cell")
+            if picked is not None and len(picked) >= 3:
+                _, _, conn_result = picked
+                if isinstance(conn_result, RGCConnectivityResult):
+                    cp = _shared.get("cell_positions")
+                    if cp is not None:
+                        overlay = draw_cell_overlay(
+                            state.grid_shape(),
+                            cp,
+                            conn_result,
+                            state.config.retina.microns_per_px,
+                        )
+                        mask = overlay[..., 3:4] > 0
+                        rgba = np.where(mask, overlay, rgba)
+            # Display: block-average downsample if grid > MAX_DISPLAY_SIDE, else upscale
+            gh, gw = rgba.shape[0], rgba.shape[1]
+            if gh > MAX_DISPLAY_SIDE or gw > MAX_DISPLAY_SIDE:
+                rgba = block_average_downsample_rgba(rgba, MAX_DISPLAY_SIDE)
+            else:
+                rgba = np.repeat(np.repeat(rgba, DISPLAY_SCALE, axis=0), DISPLAY_SCALE, axis=1)
             tex_data = np.ascontiguousarray(rgba.astype(np.float32)).flatten()
             img = (rgba * 255).astype(np.uint8)
 
         _shared["last_frame"] = img
         dpg.set_value(VIEWPORT_TEX_TAG, tex_data)
-        _update_stats(state)
+        # Update stats every 5th frame to reduce CPU (sparkline, histogram are costly)
+        st = _shared.get("stats_tick", 0)
+        _shared["stats_tick"] = st + 1
+        if st % 5 == 0:
+            _update_stats(state)
 
         dpg.render_dearpygui_frame()
+
+        # Cap frame rate to avoid burning CPU and keep system responsive
+        elapsed = time.perf_counter() - frame_start
+        sleep_time = (1.0 / TARGET_FPS) - elapsed
+        if sleep_time > 0.001:
+            time.sleep(sleep_time)
 
     dpg.destroy_context()
 

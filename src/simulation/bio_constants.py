@@ -3,7 +3,42 @@
 # All values sourced from peer-reviewed human/mammalian retina data.
 # Both the 2D heatmap viewer and the 3D Signal Flow viewer import
 # from this file so biology is never inconsistent between views.
+#
+# References for scale parameters:
+# - Drasdo & Fowler (1974) Ophthalmic & Physiological Optics: 290 μm/degree
+# - Curcio & Allen (1990) J Comp Neurol 300(1):5–25: RGC density by eccentricity
+# - Dacey (1993) J Neurosci 13(12):5334–5355: Midget/parasol dendritic scaling
+# - Watanabe & Rodieck (1989) J Comp Neurol 289(3):434–454: Parasol field diameter
 # =============================================================
+
+# --- Physical scale (retina) ---
+# Human foveal cone spacing: ~2.5 μm center-to-center
+# Human peripheral cone spacing: ~10–30 μm at 10° eccentricity
+# Rod spacing: ~2–3 μm (tightly packed outside fovea)
+# Midget RGC dendritic field (fovea): ~5–10 μm diameter
+# Parasol RGC dendritic field (5° ecc.): ~100–200 μm diameter
+# Parasol RGC dendritic field (20° ecc.): ~300–500 μm diameter
+# 1° of visual angle ≈ 290 μm on the human retina (Drasdo & Fowler 1974)
+MICRONS_PER_DEGREE = 290.0  # μm/° on human retina
+FOVEAL_CONE_SPACING = 2.5  # μm
+PERIPHERAL_CONE_SPACING = 15.0  # μm at ~10° eccentricity
+ROD_SPACING = 2.5  # μm
+MIDGET_DEND_DIAMETER = 7.0  # μm (fovea)
+PARASOL_DEND_DIAMETER = 150.0  # μm (mid-periphery)
+
+# --- Large-field grid (recommended: 2048×2048, 4 μm/px ≈ 28° patch) ---
+# Current small grid: 256×256 px; at 4 μm/px → 1024 μm ≈ 3.5°
+# 2048×2048 px at 4 μm/px → 8192 μm ≈ 28° visual angle
+# 4096×4096 px at 4 μm/px → 16384 μm ≈ 56° visual angle
+GRID_SIZE_PX = 2048  # pixels per side (large-field default)
+MICRONS_PER_PX = 4.0  # μm per pixel
+GRID_SIZE_MICRONS = GRID_SIZE_PX * MICRONS_PER_PX  # 8192 μm
+GRID_SIZE_DEGREES = GRID_SIZE_MICRONS / MICRONS_PER_DEGREE  # ~28°
+
+# RGC density (Curcio & Allen 1990): parasol ~150 cells/mm² at 10°; midget ~600 at 10°
+# Total RGC at foveal center ~35,000 cells/mm²
+PARASOL_RGC_DENSITY_PER_MM2 = 150  # at ~10° eccentricity
+MIDGET_RGC_DENSITY_PER_MM2 = 600  # at ~10° eccentricity
 
 # --- Photoreceptor counts (Curcio et al., 1990) ---
 # Curcio CA et al. J Comp Neurol 292(4):497–523.

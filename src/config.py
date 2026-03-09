@@ -16,6 +16,9 @@ from typing import Tuple
 
 import numpy as np
 
+# Avoid importing src.simulation at module level to prevent circular import
+# (config <- simulation.__init__ <- state <- config). Large-field defaults from
+# bio_constants are imported only inside large_field_config().
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
@@ -23,14 +26,25 @@ DATA_DIR = ROOT / "data"
 
 @dataclass
 class RetinaGeometry:
-    """Geometry of the simulated retinal patch (in visual degrees)."""
+    """Geometry of the simulated retinal patch (visual degrees and physical scale)."""
 
-    field_size_deg: float = 1.0  # square patch, e.g. 1° × 1°
-    grid_resolution: int = 256   # pixels per side for layer grids
+    field_size_deg: float = 1.0  # square patch in degrees (e.g. 1° or 28° for large-field)
+    grid_resolution: int = 256  # pixels per side for layer grids
+    microns_per_px: float = 4.0  # μm per pixel (physical scale; used for large-field)
 
     @property
     def dx_deg(self) -> float:
         return self.field_size_deg / self.grid_resolution
+
+    @property
+    def grid_size_microns(self) -> float:
+        """Total grid extent in μm along one side."""
+        return self.grid_resolution * self.microns_per_px
+
+    @property
+    def grid_size_degrees_physical(self) -> float:
+        """Field size in degrees implied by physical scale (grid_resolution * microns_per_px / 290)."""
+        return self.grid_resolution * self.microns_per_px / 290.0
 
 
 @dataclass
@@ -153,8 +167,24 @@ class GlobalConfig:
 
 
 def default_config() -> GlobalConfig:
-    """Convenience constructor used by the main app."""
+    """Convenience constructor used by the main app (256×256, 1° patch)."""
     return GlobalConfig()
+
+
+def large_field_config() -> GlobalConfig:
+    """Config for large-field simulation: 2048×2048 px, 4 μm/px, ~28° patch."""
+    from src.simulation.bio_constants import (
+        GRID_SIZE_DEGREES,
+        GRID_SIZE_PX,
+        MICRONS_PER_PX,
+    )
+    return GlobalConfig(
+        retina=RetinaGeometry(
+            field_size_deg=GRID_SIZE_DEGREES,
+            grid_resolution=GRID_SIZE_PX,
+            microns_per_px=MICRONS_PER_PX,
+        )
+    )
 
 
 def layer_z_positions() -> Tuple[float, ...]:

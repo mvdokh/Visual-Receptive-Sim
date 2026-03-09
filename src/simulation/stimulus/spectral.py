@@ -44,11 +44,14 @@ def build_stimulus_spectrum(
     spectral: SpectralConfig | None = None,
     grid_shape: Tuple[int, int] = (256, 256),
     time_s: float = 0.0,
+    retina=None,
 ) -> np.ndarray:
     if spectral is None:
         spectral = default_config().spectral
     if params is None:
         params = {}
+    if retina is None:
+        retina = default_config().retina
 
     stim_type = params.get("type", "spot")
     wavelength_nm = float(params.get("wavelength_nm", 550.0))
@@ -74,9 +77,36 @@ def build_stimulus_spectrum(
     h, w = grid_shape
     spectrum = np.zeros((h, w, spectral.wavelengths.size), dtype=np.float32)
 
-    cfg = default_config().retina
-    xs = (np.arange(w) - w / 2 + 0.5) * cfg.dx_deg
-    ys = (np.arange(h) - h / 2 + 0.5) * cfg.dx_deg
+    # Use provided retina so stimulus scales with grid (1° = same across 256 or 2048)
+    dx_deg = retina.dx_deg
+
+    # Fast path: spot and full_field (no meshgrid) — Cython when available, else NumPy
+    if stim_type in ("full_field", "spot"):
+        lam = spectral.wavelengths.astype(np.float32)
+        profile = np.exp(-0.5 * ((lam - wavelength_nm) / 10.0) ** 2).astype(np.float32)
+        profile *= intensity / max(float(profile.max()), 1e-6)
+        try:
+            from hot_numerical.stimulus_fill import fill_spot_or_full
+            fill_spot_or_full(
+                h, w, dx_deg, x_deg, y_deg, radius_deg,
+                profile, spectrum, full_field=(stim_type == "full_field"),
+            )
+            return spectrum
+        except ImportError:
+            pass
+        # NumPy fast path (no meshgrid): R^2 via broadcasting
+        ys = (np.arange(h, dtype=np.float32) - h / 2 + 0.5) * dx_deg - y_deg
+        xs = (np.arange(w, dtype=np.float32) - w / 2 + 0.5) * dx_deg - x_deg
+        r_sq = (ys[:, None] ** 2) + (xs[None, :] ** 2)
+        if stim_type == "full_field":
+            mask = np.ones((h, w), dtype=np.float32)
+        else:
+            mask = (r_sq <= radius_deg ** 2).astype(np.float32)
+        spectrum[:] = mask[..., None] * profile[None, None, :]
+        return spectrum
+
+    xs = (np.arange(w) - w / 2 + 0.5) * dx_deg
+    ys = (np.arange(h) - h / 2 + 0.5) * dx_deg
     X, Y = np.meshgrid(xs, ys)
 
     # Time-dependent center for moving stimuli
@@ -117,6 +147,18 @@ def build_stimulus_spectrum(
         ix = np.floor(Xc / check_deg).astype(int)
         iy = np.floor(Yc / check_deg).astype(int)
         mask = ((ix + iy) % 2 == 0).astype(np.float32)
+    elif stim_type == "expanding_ring":
+        # Large-field: ring expanding from center (tests eccentricity-dependent RF)
+        ring_speed_deg_s = float(params.get("ring_speed_deg_s", 2.0))
+        ring_width_deg = float(params.get("ring_width_deg", 0.5))
+        r_center = ring_speed_deg_s * time_s
+        mask = ((R >= r_center - ring_width_deg / 2) & (R <= r_center + ring_width_deg / 2)).astype(np.float32)
+    elif stim_type == "drifting_grating_full":
+        # Full-field drifting grating (no mask; entire grid)
+        freq = spatial_freq_cpd
+        phase_rad = np.radians(phase_deg) + 2 * np.pi * (vx_deg_s or 0.0) * time_s
+        mask = (0.5 + 0.5 * np.sin(2 * np.pi * freq * Xr + phase_rad)).astype(np.float32)
+        mask = np.clip(mask, 0, 1)
     elif stim_type == "image":
         # Arbitrary image/photo stimulus with preserved RGB so that cone
         # fundamentals can bin the colors into L/M/S.
