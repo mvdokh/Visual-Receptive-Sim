@@ -1,6 +1,8 @@
 """
 Connectivity columns: vertical lines for cone→horizontal, cone→bipolar, bipolar→amacrine, bipolar→RGC.
 Each type togglable; brightness = source_activity * target_activity * type_weight.
+Fan-in ratios (photoreceptor→RGC ~100:1, fovea ~1:1 vs periphery up to 30:1) from
+src.simulation.bio_constants; use fovea/periphery toggle in UI to switch (CONE_RGC_RATIO_FOVEA vs CONE_RGC_RATIO_PERIPHERY).
 """
 
 from __future__ import annotations

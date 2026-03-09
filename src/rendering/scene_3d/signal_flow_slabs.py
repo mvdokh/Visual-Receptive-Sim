@@ -1,6 +1,8 @@
 """
 Signal Flow Column: thick horizontal slabs arranged top-to-bottom.
 Each slab has a top face (XY spatial heatmap) and front face (XZ profile).
+Layer order and relative thickness follow biological stacking; cell-type densities
+and convergence ratios are in src.simulation.bio_constants (used by cell_spheres).
 """
 
 from __future__ import annotations
@@ -137,7 +139,7 @@ class LayerSlab:
 
 
 def create_slabs(ctx: moderngl.Context, state) -> Dict[str, LayerSlab]:
-    """Create LayerSlab dict from layout and state."""
+    """Create LayerSlab dict from layout and state. Layer labels/densities from bio_constants."""
     from src.rendering.heatmap import spectrum_to_stimulus_rgba
 
     slabs = {}

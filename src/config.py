@@ -5,6 +5,9 @@ Global biological and simulation configuration for the RGC simulator.
 
 All numerical values are collected here so the rest of the code can stay
 readable and so that future citation links can be attached in one place.
+Cell-type ratios and convergence constants (rod:cone ~20:1, photoreceptor:RGC
+~100:1, INL proportions) live in src.simulation.bio_constants and are used by
+both the 2D and 3D viewers for consistent biological accuracy.
 """
 
 from dataclasses import dataclass, field
@@ -52,6 +55,8 @@ class RGCNonlinearity:
 
 @dataclass
 class HorizontalCellParams:
+    # Horizontal cell pooling covers ~100–300 μm (many cone diameters);
+    # sigma scales with ROD_CONE_RATIO * base spacing (bio_constants).
     sigma_lm_deg: float = 0.05
     sigma_s_deg: float = 0.05
     alpha_lm: float = 0.7
@@ -60,11 +65,13 @@ class HorizontalCellParams:
 
 @dataclass
 class BipolarParams:
+    # Bipolar dendritic field: midget ~5–10 μm (narrow), diffuse ~20–30 μm (broader).
     sigma_diffuse_deg: float = 0.08
 
 
 @dataclass
 class AmacrineParams:
+    # AII (narrow) ~30–50 μm; wide-field ~200–500 μm (Masland & Raviola 1998).
     sigma_aii_deg: float = 0.04
     sigma_wide_deg: float = 0.12
     gamma_aii: float = 0.6
@@ -73,6 +80,7 @@ class AmacrineParams:
 
 @dataclass
 class DendriticFieldParams:
+    # RGC dendritic field: midget ~5–10 μm at fovea; parasol ~100–300 μm (Masland 2012).
     sigma_midget_deg: float = 0.03
     sigma_parasol_deg: float = 0.1
 

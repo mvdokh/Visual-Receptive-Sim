@@ -30,6 +30,62 @@ from src.gui.panels.data_export import (
 )
 from src.simulation import SimState, tick
 from src.simulation.rf_probe import probe_sweep_fast, fit_dog
+from src.simulation.bio_constants import (
+    RELATIVE_DENSITY,
+    PHOTORECEPTOR_RGC_RATIO,
+    ROD_CONE_RATIO,
+    CONE_FRAC_L,
+    CONE_FRAC_M,
+    CONE_FRAC_S,
+    RGCS_TOTAL,
+    RODS_TOTAL,
+    CONES_TOTAL,
+    INL_FRAC_HORIZONTAL,
+    INL_FRAC_BIPOLAR,
+    INL_FRAC_AMACRINE,
+)
+
+# 2D layer combo: (internal_key, display_label with biological context from bio_constants)
+LAYER_ITEMS_2D = [
+    ("Stimulus", "Stimulus"),
+    ("Cones L", f"Photoreceptors — L cones  [~{int(CONE_FRAC_L*100)}% of cones]"),
+    ("Cones M", f"Photoreceptors — M cones  [~{int(CONE_FRAC_M*100)}% of cones]"),
+    ("Cones S", f"Photoreceptors — S cones  [~{int(CONE_FRAC_S*100)}% of cones]"),
+    ("Horizontal", f"Horizontal Cells  [~{int(INL_FRAC_HORIZONTAL*100)}% INL | sparse]"),
+    ("Bipolar ON", f"Bipolar Cells  [~{int(INL_FRAC_BIPOLAR*100)}% INL | ON+OFF]"),
+    ("Amacrine", f"Amacrine Cells  [~{int(INL_FRAC_AMACRINE*100)}% INL | 60+ subtypes]"),
+    ("RGC Firing (L)", f"RGCs  [~{RGCS_TOTAL//1_000_000}M total | ~{int(PHOTORECEPTOR_RGC_RATIO)}:1 convergence]"),
+]
+LAYER_DISPLAY_TO_KEY = {label: key for key, label in LAYER_ITEMS_2D}
+LAYER_KEY_TO_DISPLAY = {key: label for key, label in LAYER_ITEMS_2D}
+
+# Map 2D layer combo key -> RELATIVE_DENSITY key for biological scale (bio_constants)
+LAYER_KEY_TO_DENSITY = {
+    "Cones L": "cones_L",
+    "Cones M": "cones_M",
+    "Cones S": "cones_S",
+    "Horizontal": "horizontal",
+    "Bipolar ON": "bipolar",
+    "Amacrine": "amacrine",
+    "RGC Firing (L)": "rgc",
+}
+
+
+def _set_convergence_note(layer_name: str) -> None:
+    """Set convergence overlay text from bio_constants (rod:cone ~20:1, photoreceptor→RGC ~100:1)."""
+    if not dpg.does_item_exist("layer_convergence_note"):
+        return
+    notes = {
+        "Stimulus": "Stimulus → Photoreceptors",
+        "Cones L": f"Photoreceptors → Bipolar: ~{int(PHOTORECEPTOR_RGC_RATIO)}:1 overall convergence",
+        "Cones M": f"Rod:cone ~{int(ROD_CONE_RATIO)}:1  |  Cones → Bipolar ~{int(PHOTORECEPTOR_RGC_RATIO)}:1",
+        "Cones S": f"Rods ~{RODS_TOTAL//1_000_000}M : Cones ~{CONES_TOTAL//1_000_000}M  |  20:1",
+        "Horizontal": f"Horizontal ~{int(INL_FRAC_HORIZONTAL*100)}% INL  |  sparse lateral",
+        "Bipolar ON": f"Bipolar ~{int(INL_FRAC_BIPOLAR*100)}% INL  |  Bipolar → RGC ~100:1",
+        "Amacrine": f"Amacrine ~{int(INL_FRAC_AMACRINE*100)}% INL  |  Bipolar → RGC ~100:1",
+        "RGC Firing (L)": f"~{RGCS_TOTAL//1_000_000}M RGCs  |  ~{int(PHOTORECEPTOR_RGC_RATIO)}:1 photoreceptor→RGC",
+    }
+    dpg.set_value("layer_convergence_note", notes.get(layer_name, ""))
 
 
 PANEL_WIDTH = 260
@@ -167,18 +223,25 @@ def _build_left_panel(state: SimState) -> None:
         )
         dpg.add_combo(
             label="Layer",
-            items=[
-                "Stimulus",
-                "Cones L",
-                "Cones M",
-                "Cones S",
-                "Horizontal",
-                "Bipolar ON",
-                "Amacrine",
-                "RGC Firing (L)",
-            ],
-            default_value="RGC Firing (L)",
+            items=[label for _k, label in LAYER_ITEMS_2D],
+            default_value=LAYER_KEY_TO_DISPLAY.get("RGC Firing (L)", "RGC Firing (L)"),
             tag="layer_combo",
+        )
+        dpg.add_text("", tag="layer_convergence_note")
+        dpg.add_checkbox(
+            label="Show convergence ratios",
+            default_value=False,
+            tag="show_convergence_ratios",
+        )
+        dpg.add_checkbox(
+            label="Biological scale (weight by convergence)",
+            default_value=False,
+            tag="biological_scale_2d",
+        )
+        dpg.add_text(
+            "Note: Absolute firing rates are not directly comparable across layers\n"
+            "due to ~100:1 photoreceptor→RGC convergence (Masland 2012).",
+            wrap=0,
         )
         dpg.add_spacer(height=8)
         dpg.add_text("Stimulus")
@@ -318,6 +381,12 @@ def _build_left_panel(state: SimState) -> None:
             dpg.add_checkbox(label="Cone -> Bipolar", default_value=True, tag="show_cone_to_bipolar")
             dpg.add_checkbox(label="Bipolar -> Amacrine", default_value=True, tag="show_bipolar_to_amacrine")
             dpg.add_checkbox(label="Bipolar -> RGC", default_value=True, tag="show_bipolar_to_rgc")
+            dpg.add_combo(
+                label="Fovea / Periphery",
+                items=["Fovea (~1:1 cone→RGC)", "Periphery (up to ~30:1)"],
+                default_value="Fovea (~1:1 cone→RGC)",
+                tag="fovea_periphery_combo",
+            )
             dpg.add_slider_float(
                 label="Azimuth (rad)",
                 min_value=-3.14,
@@ -822,6 +891,8 @@ def run_app() -> None:
                 ctx.show_bipolar_to_amacrine = dpg.get_value("show_bipolar_to_amacrine")
             if dpg.does_item_exist("show_bipolar_to_rgc"):
                 ctx.show_bipolar_to_rgc = dpg.get_value("show_bipolar_to_rgc")
+            if dpg.does_item_exist("fovea_periphery_combo"):
+                ctx.fovea_mode = dpg.get_value("fovea_periphery_combo") == "Fovea (~1:1 cone→RGC)"
             if _shared.get("connectivity_dirty"):
                 ctx.connectivity_dirty = True
                 _shared["connectivity_dirty"] = False
@@ -848,8 +919,14 @@ def run_app() -> None:
             # 3D returns uint8; DPG wants float 0-1
             tex_data = (img.astype(np.float32) / 255.0).flatten()
         else:
-            # 2D heatmap
-            layer_name = dpg.get_value("layer_combo") if dpg.does_item_exist("layer_combo") else "RGC Firing (L)"
+            # 2D heatmap: combo value is display label; resolve to internal key (bio_constants)
+            layer_display = dpg.get_value("layer_combo") if dpg.does_item_exist("layer_combo") else LAYER_KEY_TO_DISPLAY.get("RGC Firing (L)", "RGC Firing (L)")
+            layer_name = LAYER_DISPLAY_TO_KEY.get(layer_display, layer_display)
+            if dpg.does_item_exist("layer_convergence_note"):
+                if dpg.does_item_exist("show_convergence_ratios") and dpg.get_value("show_convergence_ratios"):
+                    _set_convergence_note(layer_name)
+                else:
+                    dpg.set_value("layer_convergence_note", "")
             if layer_name == "Stimulus":
                 stim_type = state.stimulus_params.get("type", "spot")
                 # For image stimuli, show the loaded RGB image directly so the
@@ -891,6 +968,12 @@ def run_app() -> None:
                 layer, colormap = layer_map.get(layer_name, (state.fr_midget_on_L, "firing"))
                 if layer is None:
                     layer = np.zeros(state.grid_shape(), dtype=np.float32)
+                # Optional: weight by convergence so signal compression is visible (bio_constants)
+                if dpg.does_item_exist("biological_scale_2d") and dpg.get_value("biological_scale_2d"):
+                    dkey = LAYER_KEY_TO_DENSITY.get(layer_name)
+                    if dkey and dkey in RELATIVE_DENSITY:
+                        scale = RELATIVE_DENSITY["rgc"] / RELATIVE_DENSITY[dkey]
+                        layer = np.clip(layer.astype(np.float32) * scale, 0.0, None)
                 rgba = grid_to_rgba(layer, colormap=colormap)
             # Upscale to match texture size (display_w × display_h) to avoid flashing
             rgba = np.repeat(np.repeat(rgba, DISPLAY_SCALE, axis=0), DISPLAY_SCALE, axis=1)

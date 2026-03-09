@@ -1,4 +1,8 @@
-"""Instanced sphere rendering for individual cells. Signal Flow Column: inside slabs, activity-scaled size, bloom."""
+"""
+Instanced sphere rendering for individual cells. Signal Flow Column: inside slabs,
+activity-scaled size, bloom. Cell counts and rod:cone / L:M:S ratios follow
+src.simulation.bio_constants (Curcio et al. 1990/1991, Masland 2012, Masland & Raviola 1998).
+"""
 
 from __future__ import annotations
 
@@ -8,6 +12,11 @@ from typing import Optional
 
 import moderngl
 import numpy as np
+
+from src.simulation.bio_constants import RELATIVE_DENSITY, ROD_CONE_RATIO
+
+# Rod:cone ~20:1 — 92M rods, 4.6M cones (Curcio et al. 1990). Cone L:M:S ≈ 64:32:2 (Curcio et al. 1991).
+# Overall photoreceptor→RGC convergence ~100:1 (Masland 2012). INL: ~41% bipolar, ~39% amacrine, ~3% horizontal.
 
 
 class CellType(Enum):
@@ -24,6 +33,7 @@ class CellType(Enum):
     PARASOL_OFF = auto()
 
 
+# Cone units: L = warm red, M = green, S = blue (64:32:2 proportion in RELATIVE_DENSITY)
 CELL_COLORS = {
     CellType.L_CONE: (1.0, 0.3, 0.1),
     CellType.M_CONE: (0.3, 1.0, 0.2),
@@ -73,7 +83,7 @@ def _make_icosphere(divisions: int = 1) -> tuple[np.ndarray, np.ndarray]:
     return verts.astype(np.float32), indices
 
 
-# Signal Flow Column: layer name -> (y_center, thickness)
+# Signal Flow Column: layer name -> (y_center, thickness). Densities from bio_constants.RELATIVE_DENSITY.
 SLAB_Y = {
     "Cones": (4.7, 0.6),
     "Horizontal": (4.08, 0.25),
@@ -147,7 +157,12 @@ class CellSpheresRenderer:
         )
 
     def build_instances(self, state, field_size: float = 1.0) -> np.ndarray:
-        """Returns (N, 8): x,y,z,radius,r,g,b,activity. Y = layer center + random offset within slab."""
+        """
+        Returns (N, 8): x,y,z,radius,r,g,b,activity. Y = layer center + random offset within slab.
+        Sphere counts per layer are proportional to RELATIVE_DENSITY (bio_constants) so the
+        funnel from photoreceptors → RGC is visually apparent. Rods dominate cones ~20:1;
+        cone L:M:S in 64:32:2 with warm red / green / blue.
+        """
         h, w = state.grid_shape()
         step = self.subsample
         ny, nx = max(1, h // step), max(1, w // step)
@@ -155,29 +170,92 @@ class CellSpheresRenderer:
         zs = (np.arange(ny) - ny / 2 + 0.5) * (field_size / max(ny, 1))
         rng = np.random.default_rng(42)
         instances = []
-        layers = [
-            ("Cones", state.cone_L, CellType.L_CONE),
-            ("Horizontal", state.h_activation, CellType.HORIZONTAL),
-            ("Bipolar", state.bp_diffuse_on, CellType.BIPOLAR_ON),
-            ("Amacrine", state.amacrine_aii, CellType.AMACRINE),
-            ("RGC", state.fr_midget_on_L, CellType.MIDGET_ON),
-        ]
-        for layer_name, grid, cell_type in layers:
+
+        # Total density (RGC=1) so we can scale sphere counts; cap total spheres for performance
+        total_density = (
+            RELATIVE_DENSITY["rods"]
+            + RELATIVE_DENSITY["cones_L"]
+            + RELATIVE_DENSITY["cones_M"]
+            + RELATIVE_DENSITY["cones_S"]
+            + RELATIVE_DENSITY["horizontal"]
+            + RELATIVE_DENSITY["bipolar"]
+            + RELATIVE_DENSITY["amacrine"]
+            + RELATIVE_DENSITY["rgc"]
+        )
+        max_spheres = 3500
+        base = max_spheres / total_density
+
+        def sample_positions(n_want: int):
+            """Sample n_want (i,j) positions from the grid."""
+            if n_want <= 0:
+                return [], []
+            n_avail = ny * nx
+            if n_want >= n_avail:
+                ii = np.repeat(np.arange(ny), nx)
+                jj = np.tile(np.arange(nx), ny)
+            else:
+                idx = rng.choice(n_avail, size=n_want, replace=False)
+                ii, jj = np.unravel_index(idx, (ny, nx))
+            return ii, jj
+
+        # Photoreceptor layer: rods (gray) + L/M/S cones in RELATIVE_DENSITY proportion
+        n_rods = min(int(base * RELATIVE_DENSITY["rods"]), ny * nx)
+        n_L = min(int(base * RELATIVE_DENSITY["cones_L"]), ny * nx)
+        n_M = min(int(base * RELATIVE_DENSITY["cones_M"]), ny * nx)
+        n_S = min(int(base * RELATIVE_DENSITY["cones_S"]), ny * nx)
+        cone_L = state.cone_L if state.cone_L is not None else np.zeros((h, w))
+        cone_M = state.cone_M if state.cone_M is not None else np.zeros((h, w))
+        cone_S = state.cone_S if state.cone_S is not None else np.zeros((h, w))
+        cone_max = max(1e-6, float(np.max(cone_L + cone_M + cone_S)))
+        y_cone, thick_cone = SLAB_Y.get("Cones", (4.7, 0.6))
+        for (name, grid, n, color) in [
+            ("rod", (cone_L + cone_M) / 2, n_rods, (0.55, 0.52, 0.5)),
+            ("L", cone_L, n_L, CELL_COLORS[CellType.L_CONE]),
+            ("M", cone_M, n_M, CELL_COLORS[CellType.M_CONE]),
+            ("S", cone_S, n_S, CELL_COLORS[CellType.S_CONE]),
+        ]:
+            if n <= 0 or grid is None:
+                continue
+            ii, jj = sample_positions(n)
+            for idx in range(len(ii)):
+                i, j = int(ii[idx]), int(jj[idx])
+                pi, pj = min(i * step, h - 1), min(j * step, w - 1)
+                act = max(0, min(1, float(grid[pi, pj]) / cone_max))
+                rad = self.radius_min + (self.radius_max - self.radius_min) * act
+                x = float(xs[j])
+                z = float(zs[i])
+                y_offset = (rng.random() - 0.5) * thick_cone * 0.8
+                y = y_cone + y_offset
+                r, g, b = color
+                instances.append([x, y, z, rad, r, g, b, act])
+
+        # INL and RGC layers: counts from RELATIVE_DENSITY (horizontal sparse, bipolar/amacrine denser)
+        for layer_name, grid, cell_type, density_key in [
+            ("Horizontal", state.h_activation, CellType.HORIZONTAL, "horizontal"),
+            ("Bipolar", state.bp_diffuse_on, CellType.BIPOLAR_ON, "bipolar"),
+            ("Amacrine", state.amacrine_aii, CellType.AMACRINE, "amacrine"),
+            ("RGC", state.fr_midget_on_L, CellType.MIDGET_ON, "rgc"),
+        ]:
             if grid is None:
+                continue
+            n_want = min(int(base * RELATIVE_DENSITY[density_key]), ny * nx)
+            if n_want <= 0:
                 continue
             y_center, thick = SLAB_Y.get(layer_name, (3.0, 0.3))
             r, g, b = CELL_COLORS.get(cell_type, (0.8, 0.8, 0.8))
             g_max = max(1e-6, float(np.max(grid)))
-            for i in range(ny):
-                for j in range(nx):
-                    pi, pj = min(i * step, h - 1), min(j * step, w - 1)
-                    act = max(0, min(1, float(grid[pi, pj]) / g_max))
-                    rad = self.radius_min + (self.radius_max - self.radius_min) * act
-                    x = float(xs[j])
-                    z = float(zs[i])
-                    y_offset = (rng.random() - 0.5) * thick * 0.8
-                    y = y_center + y_offset
-                    instances.append([x, y, z, rad, r, g, b, act])
+            ii, jj = sample_positions(n_want)
+            for idx in range(len(ii)):
+                i, j = int(ii[idx]), int(jj[idx])
+                pi, pj = min(i * step, h - 1), min(j * step, w - 1)
+                act = max(0, min(1, float(grid[pi, pj]) / g_max))
+                rad = self.radius_min + (self.radius_max - self.radius_min) * act
+                x = float(xs[j])
+                z = float(zs[i])
+                y_offset = (rng.random() - 0.5) * thick * 0.8
+                y = y_center + y_offset
+                instances.append([x, y, z, rad, r, g, b, act])
+
         return np.array(instances, dtype=np.float32) if instances else np.zeros((0, 8), dtype=np.float32)
 
     def draw(self, state, mvp: np.ndarray, field_size: float = 1.0) -> None:

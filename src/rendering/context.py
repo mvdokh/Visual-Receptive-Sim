@@ -3,6 +3,7 @@ ModernGL rendering context for the 3D Signal Flow Column.
 
 Scene: thick horizontal slabs, connectivity lines (four types), cell spheres with
 GPU additive bloom, per-layer trace strips (rolling heatmaps), box-blur post-pass.
+Cell counts and convergence ratios from src.simulation.bio_constants (Curcio, Masland, Masland & Raviola).
 """
 
 from __future__ import annotations
@@ -53,6 +54,8 @@ class RenderContext:
     show_cone_to_bipolar: bool = True
     show_bipolar_to_amacrine: bool = True
     show_bipolar_to_rgc: bool = True
+    # Fovea (~1:1 cone→RGC) vs periphery (up to ~30:1); from bio_constants CONE_RGC_RATIO_FOVEA / CONE_RGC_RATIO_PERIPHERY
+    fovea_mode: bool = True
     slice_x: float = 0.0
     connectivity_dirty: bool = False
     _slab_layout: list = field(default_factory=list, init=False)

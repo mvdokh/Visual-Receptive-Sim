@@ -34,3 +34,60 @@ Color
 - **L−M** and **S−(L+M)** are computed as color-opponent signals (e.g. at the RGC output and from effective cone signals) for analysis and display; the core pipeline does not implement explicit color-opponent circuitry beyond this.
 
 Parameter names in the code (e.g. :math:`\sigma`, :math:`\alpha`, :math:`\gamma`) correspond to spatial scales and coupling strengths; see :doc:`equations` for their roles in the math.
+
+Cell Type Proportions and Convergence Ratios
+============================================
+
+The simulator's layered architecture reflects the anatomical organization
+of the mammalian retina, where cell-type abundance and convergence ratios
+are well-characterized and directly determine the computational properties
+of each processing stage. All numerical constants are centralized in
+``src/simulation/bio_constants.py`` and imported by both the 2D and 3D
+viewers to ensure consistency.
+
+**Photoreceptors**
+The human retina contains approximately 92 million rods and 4.6 million
+cones per eye (Curcio et al., 1990), yielding a rod:cone ratio of ~20:1.
+Cone subtypes are distributed as approximately 64% L, 32% M, and 2% S
+(Curcio et al., 1991). This spectral imbalance is reflected in the
+simulator's cone fundamental weighting and in the relative density of
+cone-type units rendered in both viewers.
+
+**Convergence to RGCs**
+Approximately 1 million RGCs receive input from ~96 million
+photoreceptors, giving an overall convergence ratio of ~100:1
+(Masland, 2012). This ratio is not uniform: in the fovea, midget RGCs
+receive private-line input from 1–2 cones (~1:1), while parasol RGCs
+in the periphery integrate across up to 30 cones. This gradient is
+controlled in the simulator via ``sigma_dend`` and is visualized in
+both the 2D convergence overlay and the 3D connectivity fan-in lines.
+Switch between foveal and peripheral modes using the Fovea/Periphery
+toggle in the UI.
+
+**Inner Nuclear Layer Proportions**
+In the mammalian INL, cell-type proportions are approximately:
+bipolar ~41%, amacrine ~39%, Müller glia ~16%, horizontal ~3%
+(Masland & Raviola, 1998). The dominance of bipolar and amacrine
+cells over horizontal cells is reflected in the relative layer
+densities rendered in both viewers.
+
+References
+----------
+
+- Curcio, C. A., Sloan, K. R., Kalina, R. E., & Hendrickson, A. E. (1990).
+  Human photoreceptor topography. *J Comp Neurol* **292**(4):497–523.
+  https://doi.org/10.1002/cne.902920402
+
+- Curcio, C. A., Allen, K. A., Sloan, K. R., et al. (1991).
+  Distribution and morphology of human cone photoreceptors stained with
+  anti-opsin antibodies. *J Comp Neurol* **312**(4):610–624.
+  https://doi.org/10.1002/cne.903120411
+
+- Masland, R. H. & Raviola, E. (1998).
+  Confronting complexity: strategies for understanding the microcircuitry
+  of the retina. *Annu Rev Neurosci* **23**:249–284.
+  https://doi.org/10.1146/annurev.neuro.23.1.249
+
+- Masland, R. H. (2012).
+  The neuronal organization of the retina. *Neuron* **76**(2):266–280.
+  https://doi.org/10.1016/j.neuron.2012.10.002
