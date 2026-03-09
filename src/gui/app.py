@@ -31,11 +31,11 @@ from PIL import Image
 DISPLAY_SCALE = 4
 
 from src.config import default_config
-from src.rendering import RenderContext
 from src.rendering.scene_3d.camera import ELEVATION_MAX, DEFAULT_AZIMUTH, DEFAULT_ELEVATION
 from src.rendering.heatmap import (
     block_average_downsample,
     block_average_downsample_rgba,
+    draw_scale_bar_rgba,
     grid_to_rgba,
     spectrum_to_stimulus_rgba,
 )
@@ -54,6 +54,7 @@ from src.simulation.connectivity import (
     compute_rgc_connectivity,
 )
 from src.gui.panels.cell_inspector import update_inspector
+from src.viewers.viewer_3d import HAS_VISPY, VispyViewer3D
 from src.gui.panels.data_export import (
     export_screenshot_png,
     export_layer_grids_csv,
@@ -76,16 +77,16 @@ from src.simulation.bio_constants import (
     INL_FRAC_AMACRINE,
 )
 
-# 2D layer combo: (internal_key, display_label with biological context from bio_constants)
+# 2D layer combo: (internal_key, display_label)
 LAYER_ITEMS_2D = [
     ("Stimulus", "Stimulus"),
-    ("Cones L", f"Photoreceptors — L cones  [~{int(CONE_FRAC_L*100)}% of cones]"),
-    ("Cones M", f"Photoreceptors — M cones  [~{int(CONE_FRAC_M*100)}% of cones]"),
-    ("Cones S", f"Photoreceptors — S cones  [~{int(CONE_FRAC_S*100)}% of cones]"),
-    ("Horizontal", f"Horizontal Cells  [~{int(INL_FRAC_HORIZONTAL*100)}% INL | sparse]"),
-    ("Bipolar ON", f"Bipolar Cells  [~{int(INL_FRAC_BIPOLAR*100)}% INL | ON+OFF]"),
-    ("Amacrine", f"Amacrine Cells  [~{int(INL_FRAC_AMACRINE*100)}% INL | 60+ subtypes]"),
-    ("RGC Firing (L)", f"RGCs  [~{RGCS_TOTAL//1_000_000}M total | ~{int(PHOTORECEPTOR_RGC_RATIO)}:1 convergence]"),
+    ("Cones L", "Cone (L)"),
+    ("Cones M", "Cone (M)"),
+    ("Cones S", "Cone (S)"),
+    ("Horizontal", "Horizontal"),
+    ("Bipolar ON", "Bipolar"),
+    ("Amacrine", "Amacrine"),
+    ("RGC Firing (L)", "RGC"),
 ]
 LAYER_DISPLAY_TO_KEY = {label: key for key, label in LAYER_ITEMS_2D}
 LAYER_KEY_TO_DISPLAY = {key: label for key, label in LAYER_ITEMS_2D}
@@ -244,18 +245,31 @@ def _update_view_mode_ui(mode: str) -> None:
             dpg.show_item("pick_layer_combo")
         else:
             dpg.hide_item("pick_layer_combo")
+    if dpg.does_item_exist("viewer3d_toolbar"):
+        if is_3d:
+            dpg.show_item("viewer3d_toolbar")
+        else:
+            dpg.hide_item("viewer3d_toolbar")
 
 
 def _reset_camera(preset: str) -> None:
-    ctx = _shared.get("render_ctx")
-    if ctx is not None:
-        ctx.camera.set_preset(preset)
+    viewer = _shared.get("vispy_viewer")
+    if viewer is not None and HAS_VISPY:
+        cam = viewer._camera
+        if preset == "iso":
+            cam.azimuth, cam.elevation, cam.distance = 45.0, 20.0, 12.0
+        elif preset == "top":
+            cam.azimuth, cam.elevation, cam.distance = 0.0, -89.0, 12.0
+        elif preset == "front":
+            cam.azimuth, cam.elevation, cam.distance = 0.0, 0.0, 12.0
+        else:
+            cam.azimuth, cam.elevation, cam.distance = 45.0, 20.0, 12.0
         if dpg.does_item_exist("camera_azimuth"):
-            dpg.set_value("camera_azimuth", ctx.camera._azimuth_target)
+            dpg.set_value("camera_azimuth", float(cam.azimuth))
         if dpg.does_item_exist("camera_elevation"):
-            dpg.set_value("camera_elevation", ctx.camera._elevation_target)
+            dpg.set_value("camera_elevation", float(cam.elevation))
         if dpg.does_item_exist("camera_distance"):
-            dpg.set_value("camera_distance", ctx.camera._distance_target)
+            dpg.set_value("camera_distance", float(cam.distance))
 
 
 def _build_menu_bar() -> None:
@@ -289,27 +303,22 @@ def _build_left_panel(state: SimState) -> None:
             default_value=LAYER_KEY_TO_DISPLAY.get("RGC Firing (L)", "RGC Firing (L)"),
             tag="layer_combo",
         )
+        # Scale bar length is in microns (um). Keep ASCII "um" to avoid font glyph issues.
+        try:
+            scale_um = float(state.config.viewer_3d.scale_bar_um)
+        except Exception:
+            scale_um = 100.0
+        dpg.add_text(f"Scale bar: {scale_um:.0f} um", tag="scale_bar_text")
         dpg.add_combo(
             label="Pick layer (click viewport to inspect)",
             items=["RGC", "Cone", "Bipolar", "Horizontal", "Amacrine"],
             default_value="RGC",
             tag="pick_layer_combo",
         )
-        dpg.add_text("", tag="layer_convergence_note")
-        dpg.add_checkbox(
-            label="Show convergence ratios",
-            default_value=False,
-            tag="show_convergence_ratios",
-        )
         dpg.add_checkbox(
             label="Biological scale (weight by convergence)",
             default_value=False,
             tag="biological_scale_2d",
-        )
-        dpg.add_text(
-            "Note: Absolute firing rates are not directly comparable across layers\n"
-            "due to ~100:1 photoreceptor→RGC convergence (Masland 2012).",
-            wrap=0,
         )
         dpg.add_spacer(height=8)
         dpg.add_text("Stimulus")
@@ -463,9 +472,7 @@ def _build_left_panel(state: SimState) -> None:
                 max_value=3.14,
                 default_value=float(DEFAULT_AZIMUTH),
                 tag="camera_azimuth",
-                callback=lambda s, a: _shared.get("render_ctx") and (
-                    setattr(_shared["render_ctx"].camera, "_azimuth_target", a)
-                    or setattr(_shared["render_ctx"].camera, "azimuth", a)),
+                callback=lambda s, a: _shared.get("vispy_viewer") and setattr(_shared["vispy_viewer"]._camera, "azimuth", a),
             )
             dpg.add_slider_float(
                 label="Elevation (rad)",
@@ -473,9 +480,7 @@ def _build_left_panel(state: SimState) -> None:
                 max_value=ELEVATION_MAX,
                 default_value=float(DEFAULT_ELEVATION),
                 tag="camera_elevation",
-                callback=lambda s, a: _shared.get("render_ctx") and (
-                    setattr(_shared["render_ctx"].camera, "_elevation_target", a)
-                    or setattr(_shared["render_ctx"].camera, "elevation", a)),
+                callback=lambda s, a: _shared.get("vispy_viewer") and setattr(_shared["vispy_viewer"]._camera, "elevation", a),
             )
             dpg.add_slider_float(
                 label="Distance",
@@ -483,9 +488,7 @@ def _build_left_panel(state: SimState) -> None:
                 max_value=14.0,
                 default_value=6.0,
                 tag="camera_distance",
-                callback=lambda s, a: _shared.get("render_ctx") and (
-                    setattr(_shared["render_ctx"].camera, "_distance_target", a)
-                    or setattr(_shared["render_ctx"].camera, "distance", a)),
+                callback=lambda s, a: _shared.get("vispy_viewer") and setattr(_shared["vispy_viewer"]._camera, "distance", a),
             )
             with dpg.tree_node(label="Layer visibility", default_open=True):
                 _layer_names = ["Stimulus", "Cones", "Horizontal", "Bipolar", "Amacrine", "RGC"]
@@ -589,6 +592,139 @@ def _build_right_panel(state: SimState) -> None:
             with dpg.tab(label="Inspector"):
                 from src.gui.panels.cell_inspector import build_inspector_panel
                 build_inspector_panel()
+            with dpg.tab(label="Cell Params"):
+                cfg = state.config
+                with dpg.tree_node(label="Midget RGC", default_open=True):
+                    dpg.add_input_float(
+                        label="Dendritic sigma (deg)",
+                        default_value=cfg.dendritic.sigma_midget_deg,
+                        step=0.001,
+                        callback=lambda s, a: setattr(cfg.dendritic, "sigma_midget_deg", a),
+                    )
+                    dpg.add_input_float(
+                        label="Max firing (sp/s)",
+                        default_value=cfg.rgc_nl.r_max,
+                        step=1.0,
+                        callback=lambda s, a: setattr(cfg.rgc_nl, "r_max", a),
+                    )
+                    dpg.add_input_float(
+                        label="LN slope",
+                        default_value=cfg.rgc_nl.slope,
+                        step=0.1,
+                        callback=lambda s, a: setattr(cfg.rgc_nl, "slope", a),
+                    )
+                    dpg.add_input_float(
+                        label="LN half-point",
+                        default_value=cfg.rgc_nl.x_half,
+                        step=0.01,
+                        callback=lambda s, a: setattr(cfg.rgc_nl, "x_half", a),
+                    )
+                    dpg.add_input_float(
+                        label="Tau (s)",
+                        default_value=cfg.temporal.rgc_tau,
+                        step=0.01,
+                        callback=lambda s, a: setattr(cfg.temporal, "rgc_tau", a),
+                    )
+                with dpg.tree_node(label="Parasol RGC", default_open=False):
+                    dpg.add_input_float(
+                        label="Dendritic sigma (deg)",
+                        default_value=cfg.dendritic.sigma_parasol_deg,
+                        step=0.001,
+                        callback=lambda s, a: setattr(cfg.dendritic, "sigma_parasol_deg", a),
+                    )
+                    dpg.add_input_float(
+                        label="Max firing (sp/s)",
+                        default_value=cfg.rgc_nl.r_max,
+                        step=1.0,
+                        callback=lambda s, a: setattr(cfg.rgc_nl, "r_max", a),
+                    )
+                with dpg.tree_node(label="Bipolar (midget/diffuse)", default_open=False):
+                    dpg.add_input_float(
+                        label="Sigma diffuse (deg)",
+                        default_value=cfg.bipolar.sigma_diffuse_deg,
+                        step=0.001,
+                        callback=lambda s, a: setattr(cfg.bipolar, "sigma_diffuse_deg", a),
+                    )
+                    dpg.add_input_float(
+                        label="Tau (s)",
+                        default_value=cfg.temporal.bipolar_tau,
+                        step=0.01,
+                        callback=lambda s, a: setattr(cfg.temporal, "bipolar_tau", a),
+                    )
+                with dpg.tree_node(label="Horizontal Cells", default_open=False):
+                    dpg.add_input_float(
+                        label="Sigma LM (deg)",
+                        default_value=cfg.horizontal.sigma_lm_deg,
+                        step=0.001,
+                        callback=lambda s, a: setattr(cfg.horizontal, "sigma_lm_deg", a),
+                    )
+                    dpg.add_input_float(
+                        label="Sigma S (deg)",
+                        default_value=cfg.horizontal.sigma_s_deg,
+                        step=0.001,
+                        callback=lambda s, a: setattr(cfg.horizontal, "sigma_s_deg", a),
+                    )
+                    dpg.add_input_float(
+                        label="Alpha LM",
+                        default_value=cfg.horizontal.alpha_lm,
+                        step=0.01,
+                        callback=lambda s, a: setattr(cfg.horizontal, "alpha_lm", a),
+                    )
+                    dpg.add_input_float(
+                        label="Alpha S",
+                        default_value=cfg.horizontal.alpha_s,
+                        step=0.01,
+                        callback=lambda s, a: setattr(cfg.horizontal, "alpha_s", a),
+                    )
+                    dpg.add_input_float(
+                        label="Tau (s)",
+                        default_value=cfg.temporal.horizontal_tau,
+                        step=0.01,
+                        callback=lambda s, a: setattr(cfg.temporal, "horizontal_tau", a),
+                    )
+                with dpg.tree_node(label="Amacrine (AII)", default_open=False):
+                    dpg.add_input_float(
+                        label="Sigma (deg)",
+                        default_value=cfg.amacrine.sigma_aii_deg,
+                        step=0.001,
+                        callback=lambda s, a: setattr(cfg.amacrine, "sigma_aii_deg", a),
+                    )
+                    dpg.add_input_float(
+                        label="Gamma (weight)",
+                        default_value=cfg.amacrine.gamma_aii,
+                        step=0.01,
+                        callback=lambda s, a: setattr(cfg.amacrine, "gamma_aii", a),
+                    )
+                    dpg.add_input_float(
+                        label="Tau (s)",
+                        default_value=cfg.temporal.amacrine_tau,
+                        step=0.01,
+                        callback=lambda s, a: setattr(cfg.temporal, "amacrine_tau", a),
+                    )
+                with dpg.tree_node(label="Amacrine (Wide-field)", default_open=False):
+                    dpg.add_input_float(
+                        label="Sigma (deg)",
+                        default_value=cfg.amacrine.sigma_wide_deg,
+                        step=0.001,
+                        callback=lambda s, a: setattr(cfg.amacrine, "sigma_wide_deg", a),
+                    )
+                    dpg.add_input_float(
+                        label="Gamma (weight)",
+                        default_value=cfg.amacrine.gamma_wide,
+                        step=0.01,
+                        callback=lambda s, a: setattr(cfg.amacrine, "gamma_wide", a),
+                    )
+                with dpg.tree_node(label="3D Viewer Display", default_open=False):
+                    from src.simulation.bio_constants import CONE_FRAC_L, CONE_FRAC_M, CONE_FRAC_S, ROD_CONE_RATIO
+
+                    dpg.add_text(f"L cone fraction: {float(CONE_FRAC_L):.3f}")
+                    dpg.add_text(f"M cone fraction: {float(CONE_FRAC_M):.3f}")
+                    dpg.add_text(f"S cone fraction: {float(CONE_FRAC_S):.3f}")
+                    dpg.add_text(f"Rod : Cone ratio: {float(ROD_CONE_RATIO):.1f}")
+                dpg.add_spacer(height=8)
+                dpg.add_button(label="Reset to defaults", width=-1)
+                dpg.add_button(label="Save preset", width=-1)
+                dpg.add_button(label="Load preset", width=-1)
             with dpg.tab(label="Receptive Field"):
                 dpg.add_combo(label="RGC type", items=["midget_on_L", "midget_off_L", "parasol_on", "parasol_off"], default_value="midget_on_L", tag="rf_rgc_type")
                 dpg.add_button(label="Compute RF (24x24 sweep)", tag="btn_compute_rf", callback=lambda: _shared.update({"rf_pending": True}))
@@ -596,10 +732,42 @@ def _build_right_panel(state: SimState) -> None:
 
 
 def _build_center_viewport(display_width: int, display_height: int) -> None:
-    """Center panel: displays the simulation heatmap via a dynamic texture."""
+    """Center panel: displays the simulation heatmap or 3D stack plus 3D toolbar."""
     with dpg.child_window(border=True, width=-1, height=-1, tag=VIEWPORT_AREA_TAG):
-        # Image tag so we can resize/center each frame; initial size placeholder
-        dpg.add_image(VIEWPORT_TEX_TAG, tag=VIEWPORT_IMAGE_TAG, width=400, height=400)
+        with dpg.group(horizontal=False):
+            # Image tag so we can resize/center each frame; initial size placeholder
+            dpg.add_image(VIEWPORT_TEX_TAG, tag=VIEWPORT_IMAGE_TAG, width=400, height=400)
+            # Bottom 3D toolbar (shown only in 3D mode).
+            with dpg.group(horizontal=True, tag="viewer3d_toolbar"):
+                dpg.add_button(label="Zoom -", width=60, callback=lambda: _shared.get("vispy_viewer") and HAS_VISPY and _shared["vispy_viewer"].add_zoom(+0.5))
+                dpg.add_slider_float(
+                    label="",
+                    width=140,
+                    min_value=3.0,
+                    max_value=50.0,
+                    default_value=12.0,
+                    tag="viewer3d_zoom_slider",
+                    callback=lambda s, a: _shared.get("vispy_viewer") and HAS_VISPY and setattr(_shared["vispy_viewer"]._camera, "distance", float(a)),
+                )
+                dpg.add_button(label="Zoom +", width=60, callback=lambda: _shared.get("vispy_viewer") and HAS_VISPY and _shared["vispy_viewer"].add_zoom(-0.5))
+                dpg.add_spacer(width=8)
+                dpg.add_button(label="⟲ Reset", width=70, callback=lambda: _reset_camera("iso"))
+                dpg.add_checkbox(
+                    label="Flat / Sphere",
+                    tag="viewer3d_flat_sphere",
+                    default_value=False,
+                )
+                dpg.add_spacer(width=8)
+                dpg.add_text("Cells:")
+                dpg.add_slider_int(
+                    label="",
+                    width=130,
+                    min_value=1000,
+                    max_value=50000,
+                    default_value=8000,
+                    tag="viewer3d_cells",
+                )
+                dpg.add_checkbox(label="Max density", tag="viewer3d_max_density", default_value=False)
 
 
 def _update_stats(state: SimState) -> None:
@@ -889,7 +1057,7 @@ def run_app() -> None:
     _shared["sim_tick_counter"] = 0
     _shared["last_frame"] = None
     _shared["rf_pending"] = False
-    _shared["render_ctx"] = None
+    _shared["vispy_viewer"] = None
     _shared["connectivity_dirty"] = False
     _shared["last_mouse_pos"] = None  # for 3D orbit
     _shared["wheel_delta"] = 0  # accumulated scroll (consumed each frame when viewport hovered)
@@ -899,6 +1067,7 @@ def run_app() -> None:
     _shared["mouse_was_down"] = False  # for pick click detection
     _shared["mouse_down_pos"] = None  # (x, y) when button went down; used to avoid pick on 3D drag
     _shared["stats_tick"] = 0  # throttle stats update
+    _shared["debug_3d_prints"] = 0  # limit debug logging for 3D frames
 
     if not SIM_ON_MAIN_THREAD and state_back is not None:
         threading.Thread(target=_sim_worker, daemon=True).start()
@@ -1025,6 +1194,15 @@ def run_app() -> None:
                                     cache.put(pick_layer, cell_id, result)
                             update_inspector(result, pick_layer)
                             _shared["picked_cell"] = (pick_layer, cell_id, result)
+                            # When in 3D mode, also trigger circuit tracing in Vispy viewer.
+                            try:
+                                view_mode_click = dpg.get_value("view_mode_combo") if dpg.does_item_exist("view_mode_combo") else "2D Heatmap"
+                                if view_mode_click == "3D Stack" and HAS_VISPY and _shared.get("vispy_viewer") is not None:
+                                    viewer = _shared.get("vispy_viewer")
+                                    if viewer is not None:
+                                        viewer.set_selection_from_grid(str(pick_layer), grid_x, grid_y)
+                            except Exception:
+                                pass
                         else:
                             _shared["picked_cell"] = None
                             update_inspector(None, pick_layer if pick_layer is not None else "RGC")
@@ -1048,62 +1226,97 @@ def run_app() -> None:
                 if dpg.does_item_exist("rf_dog_result"):
                     dpg.set_value("rf_dog_result", f"Error: {e}")
 
-        # Render: 2D heatmap or 3D stack
+        # Render: 2D heatmap or 3D stack (Vispy)
         view_mode = dpg.get_value("view_mode_combo") if dpg.does_item_exist("view_mode_combo") else "2D Heatmap"
         if view_mode == "3D Stack":
-            if _shared.get("render_ctx") is None:
-                _shared["render_ctx"] = RenderContext(
-                    size=(display_w, display_h),
-                    config=cfg,
-                )
-            ctx = _shared["render_ctx"]
-            ctx.ensure_scene(state)
-            # Sync slab visibility/opacity from UI
-            for name in ["Stimulus", "Cones", "Horizontal", "Bipolar", "Amacrine", "RGC"]:
-                slab = ctx.slabs.get(name)
-                if slab is not None:
-                    if dpg.does_item_exist(f"layer_vis_{name}"):
-                        slab.visible = dpg.get_value(f"layer_vis_{name}")
-                    if dpg.does_item_exist(f"layer_opacity_{name}"):
-                        slab.opacity = dpg.get_value(f"layer_opacity_{name}")
-            # Sync connectivity and slice from UI
-            if dpg.does_item_exist("show_signal_flow"):
-                ctx.show_connectivity = dpg.get_value("show_signal_flow")
-            if dpg.does_item_exist("slice_position"):
-                ctx.slice_x = dpg.get_value("slice_position")
-            if dpg.does_item_exist("show_cone_to_horizontal"):
-                ctx.show_cone_to_horizontal = dpg.get_value("show_cone_to_horizontal")
-            if dpg.does_item_exist("show_cone_to_bipolar"):
-                ctx.show_cone_to_bipolar = dpg.get_value("show_cone_to_bipolar")
-            if dpg.does_item_exist("show_bipolar_to_amacrine"):
-                ctx.show_bipolar_to_amacrine = dpg.get_value("show_bipolar_to_amacrine")
-            if dpg.does_item_exist("show_bipolar_to_rgc"):
-                ctx.show_bipolar_to_rgc = dpg.get_value("show_bipolar_to_rgc")
-            if dpg.does_item_exist("fovea_periphery_combo"):
-                ctx.fovea_mode = dpg.get_value("fovea_periphery_combo") == "Fovea (~1:1 cone→RGC)"
-            if _shared.get("connectivity_dirty"):
-                ctx.connectivity_dirty = True
-                _shared["connectivity_dirty"] = False
-            # Camera: smooth lerp
-            ctx.camera.integrate(dt)
-            # Mouse: drag (lower sensitivity), scroll zoom
-            if dpg.does_item_exist(VIEWPORT_AREA_TAG) and dpg.is_item_hovered(VIEWPORT_AREA_TAG):
-                pos = dpg.get_mouse_pos()
-                if dpg.is_mouse_button_down(0):
-                    last = _shared.get("last_mouse_pos")
-                    if last is not None:
-                        dx, dy = pos[0] - last[0], pos[1] - last[1]
-                        ctx.camera.add_drag(dx, dy, sensitivity=0.18)
-                    _shared["last_mouse_pos"] = (pos[0], pos[1])
-                else:
-                    _shared["last_mouse_pos"] = None
-                wheel = _shared.get("wheel_delta", 0)
-                if wheel != 0:
-                    ctx.camera.add_zoom(wheel)
-                    _shared["wheel_delta"] = 0
+            # Start with a visible fallback frame so we can always see that
+            # the 3D mode is active, even if Vispy fails.
+            img = np.full((display_h, display_w, 4), [32, 16, 64, 255], dtype=np.uint8)
+            if HAS_VISPY:
+                # Ensure simulation arrays exist so 3D viewer has something to draw.
+                try:
+                    state.ensure_initialized()
+                except Exception:
+                    pass
+                try:
+                    if _shared.get("vispy_viewer") is None:
+                        _shared["vispy_viewer"] = VispyViewer3D(
+                            size=(display_w, display_h),
+                            config=cfg,
+                        )
+                    viewer = _shared["vispy_viewer"]
+                    if viewer._size != (display_w, display_h):
+                        viewer.resize(display_w, display_h)
+                    viewer.update_frame(state)
+                    # Mouse: drag and scroll zoom (same as before)
+                    if dpg.does_item_exist(VIEWPORT_AREA_TAG) and dpg.is_item_hovered(VIEWPORT_AREA_TAG):
+                        pos = dpg.get_mouse_pos()
+                        if dpg.is_mouse_button_down(0):
+                            last = _shared.get("last_mouse_pos")
+                            if last is not None:
+                                dx, dy = pos[0] - last[0], pos[1] - last[1]
+                                viewer.add_drag(dx, dy, sensitivity=0.18)
+                            _shared["last_mouse_pos"] = (pos[0], pos[1])
+                        else:
+                            _shared["last_mouse_pos"] = None
+                        wheel = _shared.get("wheel_delta", 0)
+                        if wheel != 0:
+                            viewer.add_zoom(wheel)
+                            _shared["wheel_delta"] = 0
+                    else:
+                        _shared["last_mouse_pos"] = None
+                    vispy_img = viewer.render()
+                    if isinstance(vispy_img, np.ndarray) and vispy_img.ndim == 3 and vispy_img.shape[2] >= 3:
+                        # Vispy may render at HiDPI resolution (e.g. 2x for Retina),
+                        # which can mismatch the Dear PyGui texture size. Downsample
+                        # to the dynamic texture resolution so it actually displays.
+                        vh, vw = vispy_img.shape[0], vispy_img.shape[1]
+                        if vh != display_h or vw != display_w:
+                            try:
+                                img_pil = Image.fromarray(vispy_img)
+                                vispy_img = np.array(
+                                    img_pil.resize((display_w, display_h), Image.BILINEAR),
+                                    dtype=np.uint8,
+                                )
+                            except Exception:
+                                # Simple stride-based fallback if PIL resize fails
+                                step_y = max(1, vh // display_h)
+                                step_x = max(1, vw // display_w)
+                                vispy_img = vispy_img[::step_y, ::step_x][:display_h, :display_w]
+                        img = vispy_img
+                except Exception as e:
+                    # Minimal stderr logging so we don't crash the UI.
+                    print(f"3D viewer error: {e}")
             else:
-                _shared["last_mouse_pos"] = None
-            img = ctx.render_3d(state)
+                # No Vispy: solid fallback color so user still sees 3D mode.
+                img = np.full((display_h, display_w, 4), [6, 6, 15, 255], dtype=np.uint8)
+            # If the 3D image is effectively all black (e.g. GL failed and returned zeros),
+            # fall back to a bright checkerboard so we can visually confirm the 3D path.
+            if isinstance(img, np.ndarray) and img.ndim == 3 and img.shape[2] >= 3:
+                if int(img.max() if img.size else 0) <= 5:
+                    yy, xx = np.indices((display_h, display_w))
+                    checker = ((xx // 32) + (yy // 32)) % 2
+                    debug_img = np.zeros((display_h, display_w, 4), dtype=np.uint8)
+                    debug_img[..., 0] = checker * 255  # red
+                    debug_img[..., 1] = (1 - checker) * 255  # green
+                    debug_img[..., 2] = 0
+                    debug_img[..., 3] = 255
+                    img = debug_img
+            # Lightweight one-time debug print so we can see what's happening.
+            dbg = _shared.get("debug_3d_prints", 0)
+            if dbg < 3 and isinstance(img, np.ndarray):
+                _shared["debug_3d_prints"] = dbg + 1
+                try:
+                    print(
+                        "3D frame stats:",
+                        "shape=", img.shape,
+                        "dtype=", img.dtype,
+                        "min=", int(img.min() if img.size else 0),
+                        "max=", int(img.max() if img.size else 0),
+                        "HAS_VISPY=", HAS_VISPY,
+                    )
+                except Exception:
+                    pass
             # 3D returns uint8; DPG wants float 0-1
             tex_data = (img.astype(np.float32) / 255.0).flatten()
         else:
@@ -1178,6 +1391,13 @@ def run_app() -> None:
                         )
                         mask = overlay[..., 3:4] > 0
                         rgba = np.where(mask, overlay, rgba)
+            # Scale bar (100 µm default; Masland 2012, Curcio et al. 1992)
+            draw_scale_bar_rgba(
+                rgba,
+                microns_per_px=state.config.retina.microns_per_px,
+                scale_bar_um=float(getattr(state.config.viewer_3d, "scale_bar_um", 100.0)),
+                position="bottom_left",
+            )
             # Display: block-average downsample if grid > MAX_DISPLAY_SIDE, else upscale
             gh, gw = rgba.shape[0], rgba.shape[1]
             if gh > MAX_DISPLAY_SIDE or gw > MAX_DISPLAY_SIDE:

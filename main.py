@@ -3,7 +3,7 @@ RGC Circuit Simulator — Python entry point.
 
 This wires together:
 - Simulation state and pipeline
-- ModernGL 3D rendering
+- Vispy 3D viewer (embedded in viewport)
 - Dear PyGui GUI
 """
 

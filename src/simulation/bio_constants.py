@@ -1,5 +1,6 @@
 # =============================================================
 # Biological constants for the RGC Circuit Simulator
+from dataclasses import dataclass
 # All values sourced from peer-reviewed human/mammalian retina data.
 # Both the 2D heatmap viewer and the 3D Signal Flow viewer import
 # from this file so biology is never inconsistent between views.
@@ -69,6 +70,68 @@ INL_FRAC_BIPOLAR = 0.41
 INL_FRAC_AMACRINE = 0.39
 INL_FRAC_MULLER = 0.16
 INL_FRAC_HORIZONTAL = 0.03
+
+# --- Connectivity constants (for circuit tracing) ---
+# Masland 2012 (Neuron), Boycott & Wässle 1991, Dacey 1993, Watanabe & Rodieck 1989
+
+
+@dataclass
+class ConnectivityConstants:
+    """Biologically accurate convergence constants for circuit tracing."""
+
+    # Cone → Bipolar (Masland 2012, Boycott & Wässle 1991)
+    cones_per_midget_bipolar_fovea: int = 1  # strict 1:1 at fovea
+    cones_per_midget_bipolar_periphery: int = 3  # loosens with eccentricity
+    cones_per_diffuse_bipolar: int = 6  # DB pools ~5-7 cones
+
+    # Bipolar → RGC (Dacey 1993, Watanabe & Rodieck 1989)
+    midget_bipolars_per_midget_rgc_fovea: int = 1  # 1:1 at fovea
+    midget_bipolars_per_midget_rgc_periphery: int = 4
+    diffuse_bipolars_per_parasol_rgc: int = 8  # parasol pools ~6-10
+
+    # Amacrine lateral reach (Masland & Raviola 1998)
+    aii_amacrine_inputs_per_bipolar: int = 20  # AII receives from many rod bipolars
+    wide_field_amacrine_lateral_span_deg: float = 2.0  # cross-tree reach
+
+    # Horizontal ← Cone (Werblin & Dowling 1969)
+    cones_per_horizontal_cell: int = 12  # H1 horizontal pools ~10-15 cones
+
+
+# --- Cell soma diameters (µm) for 3D scale bar ---
+# Curcio et al. 1992, Boycott & Wässle 1991, Masland 2012, Dacey 1993, Watanabe & Rodieck 1989
+SOMA_DIAMETER_UM = {
+    "cone_foveal": 2.5,
+    "cone_peripheral": 8.0,
+    "rod": 2.5,
+    "horizontal": 12.0,
+    "bipolar": 10.0,
+    "aii_amacrine": 9.0,
+    "wide_amacrine": 14.0,
+    "midget_rgc": 10.0,
+    "parasol_rgc": 18.0,
+}
+
+# --- Retinal layer thicknesses (µm) — OCT normative data ---
+# Total retina ~200 µm (Masland 2012 Neuron); layer thicknesses from IOVS Age 2013, Beijing Eye Study 2023
+LAYER_THICKNESS_UM = {
+    "RNFL": 8.5,
+    "GCL": 41.0,
+    "IPL": 37.0,
+    "INL": 37.0,
+    "OPL": 30.0,
+    "ONL_IS": 98.0,
+    "POS": 22.0,
+    "RPE": 12.0,
+}
+TOTAL_RETINA_THICKNESS_UM = 200.0  # Masland 2012
+
+# 3D viewer: 1 world unit Z ≈ 40 µm retinal depth
+WORLD_UNITS_PER_UM = 1.0 / 40.0
+UM_PER_WORLD_UNIT = 40.0
+
+# Scale bar: 100 µm in XY = 2.5 world units at 40 µm/unit
+SCALE_BAR_UM = 100.0
+SCALE_BAR_WORLD_UNITS = SCALE_BAR_UM * WORLD_UNITS_PER_UM  # 2.5
 
 # --- Relative layer densities normalized to RGC = 1 ---
 # Use these as display density multipliers in both 2D and 3D viewers.

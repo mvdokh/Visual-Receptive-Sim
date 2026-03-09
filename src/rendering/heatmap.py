@@ -6,9 +6,13 @@ for consumption by ModernGL and Dear PyGui.
 Block-average downsampling for large-field display at screen resolution.
 """
 
-from typing import Literal, Tuple
+from typing import Literal, Optional, Tuple
 
 import numpy as np
+
+# Scale bar: 100 µm default (bio_constants.SCALE_BAR_UM)
+# Literature: Masland 2012 (200 µm total thickness), Curcio et al. 1992 (cone diameter)
+DEFAULT_SCALE_BAR_UM = 100.0
 
 
 def block_average_downsample(grid: np.ndarray, max_side: int = 1024) -> np.ndarray:
@@ -163,5 +167,38 @@ def grid_to_rgba(
     else:
         raise ValueError(f"Unknown colormap: {colormap}")
 
+    return rgba
+
+
+def draw_scale_bar_rgba(
+    rgba: np.ndarray,
+    microns_per_px: float,
+    scale_bar_um: float = DEFAULT_SCALE_BAR_UM,
+    position: Literal["bottom_left", "bottom_right"] = "bottom_left",
+    bar_height_px: int = 4,
+    margin_px: int = 12,
+    color: Tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
+) -> np.ndarray:
+    """
+    Draw a scale bar onto the RGBA array in-place.
+
+    Scale bar length in pixels = scale_bar_um / microns_per_px.
+    References: Masland 2012 (retinal thickness), Curcio et al. 1992 (cone diameter).
+    """
+    h, w = rgba.shape[0], rgba.shape[1]
+    bar_length_px = int(scale_bar_um / microns_per_px)
+    if bar_length_px < 2 or bar_length_px > w // 2:
+        return rgba
+    y0 = h - margin_px - bar_height_px
+    y1 = h - margin_px
+    if position == "bottom_right":
+        x0 = w - margin_px - bar_length_px
+    else:
+        x0 = margin_px
+    x1 = x0 + bar_length_px
+    x0, x1 = max(0, x0), min(w, x1)
+    y0, y1 = max(0, y0), min(h, y1)
+    rgba[y0:y1, x0:x1, :] = color
+    # Label (simple white bar; text would require font rendering)
     return rgba
 

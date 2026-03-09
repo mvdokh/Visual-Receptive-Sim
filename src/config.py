@@ -139,6 +139,21 @@ class SpectralConfig:
 
 
 @dataclass
+class Viewer3DConfig:
+    """3D viewer defaults: layer spacing, camera, subsampling, distribution strip."""
+
+    layer_spacing: float = 1.0  # world units between layers (flat mode)
+    camera_fov: float = 45.0  # degrees
+    max_display_cells: int = 8000  # total cells rendered across all layers (LOD base)
+    subsample_frame_threshold_ms: float = 16.0  # auto-subsample if frame > this
+    distribution_strip_refresh_frames: int = 5  # update histograms every N sim frames
+    spherical_radius_mm: float = 12.0  # mean human retinal radius for curved mode
+    microns_per_world_unit: float = 40.0  # 1 w.u. Z ≈ 40 µm retinal depth
+    camera_inertia: float = 0.85  # rotation damping
+    scale_bar_um: float = 100.0  # XY scale bar length
+
+
+@dataclass
 class ConnectivityWeights:
     """Editable weights for 3D connectivity display and pipeline scaling."""
 
@@ -164,6 +179,7 @@ class GlobalConfig:
     amacrine: AmacrineParams = field(default_factory=AmacrineParams)
     dendritic: DendriticFieldParams = field(default_factory=DendriticFieldParams)
     spectral: SpectralConfig = field(default_factory=SpectralConfig)
+    viewer_3d: Viewer3DConfig = field(default_factory=Viewer3DConfig)
 
 
 def default_config() -> GlobalConfig:
