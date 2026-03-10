@@ -108,6 +108,16 @@ class SpectralConfig:
     lambda_step: int = 5
     fundamentals_csv: Path = DATA_DIR / "cone_fundamentals.csv"
 
+    # How RGB / scalar stimuli are mapped into spectra for cone integration.
+    # "rgbtolms" (default) uses calibrated monitor primaries from rgbtolms;
+    # "legacy_spectral" uses the original Gaussian spectral profiles.
+    image_rgb_mapping: str = "rgbtolms"
+
+    # Cone phototransduction: Naka-Rushton semi-saturation (biologically realistic).
+    # Response = I / (I + cone_saturation_sigma); linear if 0.
+    # Typical ~0.3–0.5 gives saturation at high intensity (Masland, Naka-Rushton).
+    cone_saturation_sigma: float = 0.4
+
     wavelengths: np.ndarray = field(init=False)
     sens_L: np.ndarray = field(init=False)
     sens_M: np.ndarray = field(init=False)

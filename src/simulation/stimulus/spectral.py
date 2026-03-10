@@ -37,6 +37,7 @@ import numpy as np
 from skimage.transform import resize
 
 from src.config import SpectralConfig, default_config
+from src.simulation.rgb_mapping import build_emission_from_rgb, resample_spd_to_spectral_grid
 
 
 def build_stimulus_spectrum(
@@ -54,6 +55,7 @@ def build_stimulus_spectrum(
         retina = default_config().retina
 
     stim_type = params.get("type", "spot")
+    mapping_mode = params.get("rgb_mapping_mode", getattr(spectral, "image_rgb_mapping", "rgbtolms"))
     wavelength_nm = float(params.get("wavelength_nm", 550.0))
     intensity = float(params.get("intensity", 1.0))
     radius_deg = float(params.get("radius_deg", 0.15))
@@ -80,7 +82,9 @@ def build_stimulus_spectrum(
     # Use provided retina so stimulus scales with grid (1° = same across 256 or 2048)
     dx_deg = retina.dx_deg
 
-    # Fast path: spot and full_field (no meshgrid) — Cython when available, else NumPy
+    # Fast path: spot and full_field (no meshgrid) — Cython when available, else NumPy.
+    # This always uses the legacy Gaussian spectral profile so that wavelength_nm
+    # and intensity behave exactly as before, regardless of mapping mode.
     if stim_type in ("full_field", "spot"):
         lam = spectral.wavelengths.astype(np.float32)
         profile = np.exp(-0.5 * ((lam - wavelength_nm) / 10.0) ** 2).astype(np.float32)
@@ -189,9 +193,16 @@ def build_stimulus_spectrum(
             img = img / 255.0
         img = np.clip(img, 0.0, 1.0)
 
-        # Map sRGB-ish channels to three narrowband spectral lobes so that
-        # downstream cone fundamentals can integrate them into L/M/S.
         lam = spectral.wavelengths.astype(np.float32)
+        if mapping_mode == "rgbtolms":
+            wl_src, emission = build_emission_from_rgb(img)
+            spectrum_img = resample_spd_to_spectral_grid(wl_src, emission, lam)
+            spectrum[:] = spectrum_img
+            if intensity != 1.0:
+                spectrum *= intensity
+            return spectrum
+
+        # Legacy Gaussian RGB basis mapping.
         basis_R = np.exp(-0.5 * ((lam - 610.0) / 15.0) ** 2)
         basis_G = np.exp(-0.5 * ((lam - 540.0) / 15.0) ** 2)
         basis_B = np.exp(-0.5 * ((lam - 450.0) / 15.0) ** 2)

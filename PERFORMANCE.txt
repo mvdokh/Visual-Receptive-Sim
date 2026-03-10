@@ -1,0 +1,87 @@
+================================================================================
+Visual Receptive Sim — Performance notes and how to speed things up
+================================================================================
+
+The app runs a main loop at TARGET_FPS (60), each frame: simulation tick (optional),
+render 2D or 3D, update texture, optional stats. Below are the main cost areas and
+concrete ways to speed the program up.
+
+--------------------------------------------------------------------------------
+1. Simulation tick (pipeline)
+--------------------------------------------------------------------------------
+  - tick() in src/simulation/pipeline.py is fully vectorized but does many steps:
+    stimulus spectrum, cones L/M/S, horizontal pooling, bipolar, amacrine, RGC, LN,
+    temporal smoothing. Cost scales roughly with grid size (e.g. 256² vs 2048²).
+  - Env: SIM_ON_MAIN_THREAD=1 runs the sim on the main thread; then SIM_TICK_EVERY_N
+    (default 1) ticks every Nth frame. Set SIM_TICK_EVERY_N=2 or 3 to run the sim
+    at 30 or 20 Hz while keeping 60 FPS for the UI (smoother feel, slightly slower
+    dynamics).
+  - Speedups: reduce grid resolution in config (smaller grid = fewer pixels per
+    layer). Consider moving heavy convolutions to GPU (e.g. CuPy, or a small
+    fragment shader) or JIT (Numba) for gaussian_pool_2d and similar. Profile
+    tick() with a profiler to find the single hottest function (often convolution
+    or many small NumPy ops).
+
+--------------------------------------------------------------------------------
+2. Rendering (2D)
+--------------------------------------------------------------------------------
+  - 2D Heatmap: one layer -> grid_to_rgba() -> upscale (DISPLAY_SCALE=4) or
+    block_average_downsample_rgba() if grid > MAX_DISPLAY_SIDE (1024). Copying
+    and colormap application scale with grid size.
+  - 2D All Layers: _render_all_layers_composite() builds 8 tiles (Stimulus, Cones
+    L/M/S, Horizontal, Bipolar, Amacrine, RGC), each with grid_to_rgba or
+    _grid_to_rgba_absolute_firing, then labels and scale bar. About 8× the work
+    of a single layer.
+  - Speedups: lower DISPLAY_SCALE (e.g. 2) or MAX_DISPLAY_SIDE (e.g. 512) to
+    reduce texture size and resize cost. Cache the composite when state has not
+    changed (e.g. dirty flags) and only recompute when needed. For large grids,
+    consider rendering at half resolution and upscaling for display.
+
+--------------------------------------------------------------------------------
+3. Rendering (3D)
+--------------------------------------------------------------------------------
+  - 3D Stack uses Vispy: update_frame(state) then render(). Cost depends on
+    number of mesh/instanced markers and GPU. Resize from Vispy’s (possibly
+    HiDPI) resolution to the DPG texture size adds a PIL resize or stride crop.
+  - Speedups: reduce “Cells:” slider (fewer drawn cells). Use a lower viewport
+    size. Consider level-of-detail (fewer cells when zoomed out) or simpler
+    geometry (e.g. points instead of spheres).
+
+--------------------------------------------------------------------------------
+4. Stats (sparkline, histogram, layer stats)
+--------------------------------------------------------------------------------
+  - _update_stats() runs every 5th frame (stats_tick % 5 == 0). It updates
+    mean FR, L-M / S-(L+M), per-layer mean/std/min/max, RGC sparkline (last
+    100 ticks), and RGC histogram. The histogram is further throttled (every
+    3rd time) and RGC values are subsampled to 2048 points to avoid “too many
+    bins” and slow numpy.histogram on huge arrays.
+  - Speedups: update stats less often (e.g. every 10th frame). Disable
+    sparkline or histogram in the UI when not needed. Reduce sparkline history
+    length or histogram bins.
+
+--------------------------------------------------------------------------------
+5. Cell pick (connectivity on click)
+--------------------------------------------------------------------------------
+  - On viewport click, pick_nearest_cell_any_layer() then compute_rgc_connectivity()
+    or compute_cone_connectivity() (and similar for other layers). Connectivity
+    uses CellPositions and can do a lot of indexing and weighting.
+  - Speedups: ConnectivityCache is already used to avoid recomputing the same
+    cell; ensure cache is effective and consider increasing its size or
+    persistence. Defer connectivity computation to a background thread so the
+    UI does not stall on click (show “Loading…” then fill in when ready).
+
+--------------------------------------------------------------------------------
+6. General
+--------------------------------------------------------------------------------
+  - Run the benchmark: python tests/bench_performance.py (or pytest tests/bench_performance.py -v -s)
+    to see where time is spent (tick, 2D render, downsample, connectivity).
+  - Profile: python -m cProfile -o out.prof main.py (or similar), then inspect
+    with pstats or a visual profiler to find the top hotspots.
+  - Lower grid resolution in config is the single largest lever: half resolution
+    gives roughly 4× fewer pixels per layer and often 2–4× faster tick and
+    render.
+  - If you run sim on a background thread (SIM_ON_MAIN_THREAD=0), ensure the
+    worker does not run faster than the main thread can consume; otherwise
+    you waste CPU. A single front buffer swapped each frame is already in use.
+
+================================================================================

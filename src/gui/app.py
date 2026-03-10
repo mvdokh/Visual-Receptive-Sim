@@ -24,7 +24,7 @@ TARGET_FPS = 60
 
 import dearpygui.dearpygui as dpg
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 # Upscale factor for display (texture is grid_resolution * DISPLAY_SCALE)
 # 4 = 1024x1024 for a 256 grid: good balance of sharpness vs speed.
@@ -103,6 +103,28 @@ LAYER_KEY_TO_DENSITY = {
 }
 
 
+COMPOSITE_LAYER_ORDER_2D = [
+    # Row 0
+    "Stimulus",
+    "Cones L",
+    "Cones M",
+    "Cones S",
+    # Row 1
+    "Horizontal",
+    "Bipolar ON",
+    "Amacrine",
+    "RGC Firing (L)",
+]
+
+
+def _update_rgb_mapping_mode(label: str, state: SimState) -> None:
+    """Update spectral RGB→LMS mapping mode from GUI combo label."""
+    mode = "rgbtolms" if "rgbtolms" in label else "legacy_spectral"
+    state.stimulus_params["rgb_mapping_mode"] = mode
+    if hasattr(state.config, "spectral"):
+        setattr(state.config.spectral, "image_rgb_mapping", mode)
+
+
 def _set_convergence_note(layer_name: str) -> None:
     """Set convergence overlay text from bio_constants (rod:cone ~20:1, photoreceptor→RGC ~100:1)."""
     if not dpg.does_item_exist("layer_convergence_note"):
@@ -136,6 +158,261 @@ _shared: dict = {}
 
 # Max display resolution for 2D viewer (block-average downsampling above this)
 MAX_DISPLAY_SIDE = 1024
+
+
+def _render_stimulus_rgba(state: SimState) -> np.ndarray:
+    """Return Stimulus layer as (H, W, 4) float32 RGBA in 0–1."""
+    stim_type = state.stimulus_params.get("type", "spot")
+    # For image stimuli, show the loaded RGB image directly so the
+    # user sees the true pixel colors rather than the spectral
+    # centroid approximation used internally for cones.
+    if stim_type == "image" and "image_mask" in state.stimulus_params:
+        img = np.asarray(state.stimulus_params["image_mask"], dtype=np.float32)
+        h, w = state.grid_shape()
+        if img.ndim == 2:
+            img = np.stack([img, img, img], axis=-1)
+        if img.shape[0] != h or img.shape[1] != w:
+            img = np.resize(img, (h, w, img.shape[2]))
+        vmax = float(img.max()) if img.size > 0 else 0.0
+        if vmax > 1.0:
+            img = img / 255.0
+        img = np.clip(img, 0.0, 1.0)
+        # Apply global intensity as a simple gain for display.
+        gain = float(state.stimulus_params.get("intensity", 1.0))
+        rgb = np.clip(img * gain, 0.0, 1.0)
+        rgba = np.zeros((h, w, 4), dtype=np.float32)
+        rgba[..., :3] = rgb
+        rgba[..., 3] = 1.0
+        return rgba
+    if state.stimulus_spectrum is not None:
+        wl = state.config.spectral.wavelengths
+        return spectrum_to_stimulus_rgba(state.stimulus_spectrum, wl)
+    h, w = state.grid_shape()
+    return np.zeros((h, w, 4), dtype=np.float32)
+
+
+def _get_heatmap_colormap() -> str:
+    """Return current heatmap colormap name from UI (firing, biphasic, spectral, diverging)."""
+    if dpg.does_item_exist("heatmap_colormap_combo"):
+        val = dpg.get_value("heatmap_colormap_combo")
+        # Map display label to internal name
+        cmap_map = {
+            "Firing (amber)": "firing",
+            "Biphasic": "biphasic",
+            "Spectral": "spectral",
+            "Diverging": "diverging",
+        }
+        return cmap_map.get(val, "firing")
+    return "firing"
+
+
+def _render_layer_rgba(state: SimState, layer_name: str) -> np.ndarray:
+    """Return non-stimulus layer as (H, W, 4) float32 RGBA in 0–1."""
+    layer_map = {
+        "Cones L": (state.cone_L, "firing"),
+        "Cones M": (state.cone_M, "firing"),
+        "Cones S": (state.cone_S, "firing"),
+        "Horizontal": (state.h_activation, "firing"),
+        "Bipolar ON": (state.bp_diffuse_on, "firing"),
+        "Amacrine": (state.amacrine_aii, "firing"),
+        "RGC Firing (L)": (state.fr_midget_on_L, "firing"),
+    }
+    layer, _ = layer_map.get(layer_name, (state.fr_midget_on_L, "firing"))
+    colormap = _get_heatmap_colormap()
+    if layer is None:
+        layer = np.zeros(state.grid_shape(), dtype=np.float32)
+    # Optional: weight by convergence so signal compression is visible (bio_constants)
+    if dpg.does_item_exist("biological_scale_2d") and dpg.get_value("biological_scale_2d"):
+        dkey = LAYER_KEY_TO_DENSITY.get(layer_name)
+        if dkey and dkey in RELATIVE_DENSITY:
+            scale = RELATIVE_DENSITY["rgc"] / RELATIVE_DENSITY[dkey]
+            layer = np.clip(layer.astype(np.float32) * scale, 0.0, None)
+    # Cones: display as "activity" (dark = more glutamate release, light = less)
+    if layer_name in ("Cones L", "Cones M", "Cones S"):
+        layer = 1.0 - np.clip(layer.astype(np.float32), 0.0, 1.0)
+    return grid_to_rgba(layer, colormap=colormap)
+
+
+def _grid_to_rgba_absolute_firing(
+    grid: np.ndarray,
+    global_max: float,
+    colormap: str = "firing",
+) -> np.ndarray:
+    """
+    Map a 2D activation grid (H, W) to RGBA using a shared absolute max.
+
+    Normalizes by global_max so that intensity changes across tiles are visible
+    in the 2D All Layers composite; then applies the chosen colormap.
+    """
+    g = grid.astype(np.float32)
+    if global_max <= 0.0:
+        return np.zeros((*g.shape, 4), dtype=np.float32)
+    n = np.clip(g / float(global_max), 0.0, 1.0)
+    return grid_to_rgba(n, colormap=colormap)
+
+
+def _get_tile_label_font() -> ImageFont.FreeTypeFont | ImageFont.ImageFont | None:
+    """Return cached small font for tile labels, or None on failure."""
+    font = _shared.get("tile_label_font")
+    if font is not None:
+        return font
+    try:
+        # Prefer a common sans font; fall back to default bitmap font.
+        try:
+            font = ImageFont.truetype("DejaVuSans.ttf", 14)
+        except Exception:
+            font = ImageFont.load_default()
+        _shared["tile_label_font"] = font
+        return font
+    except Exception:
+        return None
+
+
+def _draw_tile_label(
+    canvas: np.ndarray,
+    text: str,
+    tile_row: int,
+    tile_col: int,
+    tile_h: int,
+    tile_w: int,
+) -> None:
+    """Draw a small label near the top-left of the specified tile in-place on the canvas."""
+    font = _get_tile_label_font()
+    if font is None or not text:
+        return
+    canvas_h, canvas_w = canvas.shape[0], canvas.shape[1]
+    # Label dimensions: fraction of tile size, clamped to sane bounds.
+    label_h = max(14, min(int(tile_h * 0.22), 32))
+    label_w = max(60, min(int(tile_w * 0.8), 220))
+    try:
+        label_img = Image.new("RGBA", (label_w, label_h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(label_img)
+        # Background strip with strong opacity for readability.
+        bg_color = (0, 0, 0, 210)
+        draw.rectangle([0, 0, label_w, label_h], fill=bg_color)
+        text_color = (255, 255, 255, 255)
+        tw, th = draw.textsize(text, font=font)
+        tx = 6
+        ty = max(0, (label_h - th) // 2)
+        draw.text((tx, ty), text, font=font, fill=text_color)
+        fg = np.asarray(label_img, dtype=np.uint8).astype(np.float32) / 255.0
+    except Exception:
+        return
+    # Position within tile with small margin.
+    y0 = tile_row * tile_h + 6
+    x0 = tile_col * tile_w + 6
+    y1 = min(canvas_h, y0 + label_h)
+    x1 = min(canvas_w, x0 + label_w)
+    if y0 >= y1 or x0 >= x1:
+        return
+    sh = y1 - y0
+    sw = x1 - x0
+    fg_crop = fg[:sh, :sw, :]
+    bg = canvas[y0:y1, x0:x1, :]
+    alpha = fg_crop[..., 3:4]
+    canvas[y0:y1, x0:x1, :] = alpha * fg_crop + (1.0 - alpha) * bg
+
+
+def _render_all_layers_composite(state: SimState) -> np.ndarray:
+    """
+    Assemble all 8 logical layers into a single 2×4 tiled composite canvas.
+
+    Returns (Hc, Wc, 4) float32 RGBA in 0–1 where Hc = 2*grid_h, Wc = 4*grid_w.
+    """
+    grid_h, grid_w = state.grid_shape()
+    comp_h, comp_w = 2 * grid_h, 4 * grid_w
+    canvas = _shared.get("all_layers_rgba")
+    if not isinstance(canvas, np.ndarray) or canvas.shape[:2] != (comp_h, comp_w):
+        canvas = np.zeros((comp_h, comp_w, 4), dtype=np.float32)
+        _shared["all_layers_rgba"] = canvas
+    else:
+        canvas[...] = 0.0
+
+    # Cones: display as "activity" (1 - cone) so light = dim, dark = bright; shared max = 1.0.
+    cone_L = state.cone_L if state.cone_L is not None else None
+    cone_M = state.cone_M if state.cone_M is not None else None
+    cone_S = state.cone_S if state.cone_S is not None else None
+    cone_max_inverted = 1.0  # inverted scale: activity in [0, 1]
+
+    for idx, layer_key in enumerate(COMPOSITE_LAYER_ORDER_2D):
+        row = idx // 4
+        col = idx % 4
+        r0 = row * grid_h
+        r1 = (row + 1) * grid_h
+        c0 = col * grid_w
+        c1 = (col + 1) * grid_w
+        if layer_key == "Stimulus":
+            tile_rgba = _render_stimulus_rgba(state)
+        elif layer_key in ("Cones L", "Cones M", "Cones S"):
+            # Inverted: activity = 1 - cone (light → less glutamate → dim; dark → bright).
+            if layer_key == "Cones L":
+                grid = np.asarray(cone_L if cone_L is not None else np.zeros(state.grid_shape(), dtype=np.float32), dtype=np.float32).copy()
+            elif layer_key == "Cones M":
+                grid = np.asarray(cone_M if cone_M is not None else np.zeros(state.grid_shape(), dtype=np.float32), dtype=np.float32).copy()
+            else:
+                grid = np.asarray(cone_S if cone_S is not None else np.zeros(state.grid_shape(), dtype=np.float32), dtype=np.float32).copy()
+            if dpg.does_item_exist("biological_scale_2d") and dpg.get_value("biological_scale_2d"):
+                dkey = LAYER_KEY_TO_DENSITY.get(layer_key)
+                if dkey and dkey in RELATIVE_DENSITY:
+                    scale = RELATIVE_DENSITY["rgc"] / RELATIVE_DENSITY[dkey]
+                    grid = np.clip(grid * scale, 0.0, None)
+            grid = 1.0 - np.clip(grid, 0.0, 1.0)
+            tile_rgba = _grid_to_rgba_absolute_firing(grid, cone_max_inverted, _get_heatmap_colormap())
+        else:
+            tile_rgba = _render_layer_rgba(state, layer_key)
+        # Defensive: ensure tile matches expected size.
+        th, tw = tile_rgba.shape[0], tile_rgba.shape[1]
+        if th != grid_h or tw != grid_w:
+            th = min(th, grid_h)
+            tw = min(tw, grid_w)
+            canvas[r0 : r0 + th, c0 : c0 + tw, :] = tile_rgba[:th, :tw, :]
+        else:
+            canvas[r0:r1, c0:c1, :] = tile_rgba
+        label_text = LAYER_KEY_TO_DISPLAY.get(layer_key, layer_key)
+        _draw_tile_label(canvas, label_text, row, col, grid_h, grid_w)
+
+    draw_scale_bar_rgba(
+        canvas,
+        microns_per_px=state.config.retina.microns_per_px,
+        scale_bar_um=float(getattr(state.config.viewer_3d, "scale_bar_um", 100.0)),
+        position="bottom_left",
+    )
+    return canvas
+
+
+def _resize_rgba_to_display(rgba: np.ndarray, display_h: int, display_w: int) -> np.ndarray:
+    """Resize float32 RGBA 0–1 image to the fixed display size using a high-quality filter.
+
+    Preserves aspect ratio by letterboxing into the target texture.
+    """
+    h, w = rgba.shape[0], rgba.shape[1]
+    if h == display_h and w == display_w:
+        return rgba
+    rgba_clipped = np.clip(rgba, 0.0, 1.0)
+    try:
+        # Compute uniform scale that fits within the target texture.
+        scale = min(display_w / max(w, 1), display_h / max(h, 1))
+        target_w = max(1, int(w * scale))
+        target_h = max(1, int(h * scale))
+        img_pil = Image.fromarray((rgba_clipped * 255.0).astype(np.uint8), mode="RGBA")
+        img_pil = img_pil.resize((target_w, target_h), Image.BILINEAR)
+        small = np.asarray(img_pil, dtype=np.uint8).astype(np.float32) / 255.0
+        if small.shape[2] == 3:
+            alpha = np.ones((target_h, target_w, 1), dtype=np.float32)
+            small = np.concatenate([small, alpha], axis=-1)
+        # Letterbox into full texture size with a dark background.
+        bg_color = np.array([0.02, 0.02, 0.04, 1.0], dtype=np.float32)
+        out = np.broadcast_to(bg_color, (display_h, display_w, 4)).copy()
+        offset_y = max(0, (display_h - target_h) // 2)
+        offset_x = max(0, (display_w - target_w) // 2)
+        out[offset_y : offset_y + target_h, offset_x : offset_x + target_w, :] = small
+        return out.astype(np.float32)
+    except Exception:
+        # Fallback: simple nearest-neighbor via slicing when PIL is unavailable.
+        step_y = max(1, h // max(display_h, 1))
+        step_x = max(1, w // max(display_w, 1))
+        resized = rgba_clipped[::step_y, ::step_x][:display_h, :display_w]
+        return resized.astype(np.float32)
 
 
 def _ensure_cell_positions(state: SimState) -> CellPositions:
@@ -233,8 +510,9 @@ def _update_stimulus_visibility(stim_type: str, state: SimState | None = None) -
 
 
 def _update_view_mode_ui(mode: str) -> None:
-    """Show 3D-only controls when 3D view is active; hide Pick layer combo in 2D."""
+    """Show/hide controls depending on view mode (2D heatmaps vs 3D stack)."""
     is_3d = mode == "3D Stack"
+    is_all_layers_2d = mode == "2D All Layers"
     if dpg.does_item_exist("camera_3d_node"):
         if is_3d:
             dpg.show_item("camera_3d_node")
@@ -245,6 +523,12 @@ def _update_view_mode_ui(mode: str) -> None:
             dpg.show_item("pick_layer_combo")
         else:
             dpg.hide_item("pick_layer_combo")
+    # Layer combo is only meaningful in single-layer 2D heatmap mode.
+    if dpg.does_item_exist("layer_combo"):
+        if mode == "2D Heatmap":
+            dpg.show_item("layer_combo")
+        else:
+            dpg.hide_item("layer_combo")
     if dpg.does_item_exist("viewer3d_toolbar"):
         if is_3d:
             dpg.show_item("viewer3d_toolbar")
@@ -292,7 +576,7 @@ def _build_left_panel(state: SimState) -> None:
         dpg.add_text("View")
         dpg.add_combo(
             label="Mode",
-            items=["2D Heatmap", "3D Stack"],
+            items=["2D Heatmap", "2D All Layers", "3D Stack"],
             default_value="2D Heatmap",
             tag="view_mode_combo",
             callback=lambda s, a: _update_view_mode_ui(a),
@@ -320,6 +604,12 @@ def _build_left_panel(state: SimState) -> None:
             default_value=False,
             tag="biological_scale_2d",
         )
+        dpg.add_combo(
+            label="Heatmap colormap",
+            items=["Firing (amber)", "Biphasic", "Spectral", "Diverging"],
+            default_value="Firing (amber)",
+            tag="heatmap_colormap_combo",
+        )
         dpg.add_spacer(height=8)
         dpg.add_text("Stimulus")
         with dpg.tree_node(label="Stimulus", default_open=True):
@@ -344,35 +634,42 @@ def _build_left_panel(state: SimState) -> None:
                 tag="stimulus_type_combo",
                 callback=lambda s, a: (_update_stimulus_visibility(a, state), state.stimulus_params.update({"type": a})),
             )
-            dpg.add_slider_float(
-                label="Wavelength (nm)",
-                min_value=380,
-                max_value=700,
-                default_value=550,
-                callback=lambda s, a: state.stimulus_params.update({"wavelength_nm": a}),
-            )
-            dpg.add_slider_float(
-                label="Intensity",
-                min_value=0.0,
-                max_value=1.0,
-                default_value=1.0,
-                callback=lambda s, a: state.stimulus_params.update({"intensity": a}),
-            )
-            dpg.add_slider_float(
-                label="Radius (deg)",
-                min_value=0.02,
-                max_value=0.5,
-                default_value=0.15,
-                tag="stim_radius",
-                callback=lambda s, a: state.stimulus_params.update({"radius_deg": a}),
-            )
-            dpg.add_button(
-                label="Load image stimulus...",
-                width=-1,
-                tag="stim_load_image_btn",
-                callback=lambda: dpg.show_item("stim_image_dialog"),
-            )
-            with dpg.tree_node(label="Advanced", default_open=False, tag="stim_advanced_node"):
+        dpg.add_slider_float(
+            label="Wavelength (nm)",
+            min_value=380,
+            max_value=700,
+            default_value=550,
+            callback=lambda s, a: state.stimulus_params.update({"wavelength_nm": a}),
+        )
+        dpg.add_slider_float(
+            label="Intensity",
+            min_value=0.0,
+            max_value=1.0,
+            default_value=1.0,
+            callback=lambda s, a: state.stimulus_params.update({"intensity": a}),
+        )
+        dpg.add_combo(
+            label="RGB to LMS mapping",
+            items=["rgbtolms (calibrated monitor)", "Legacy Gaussian basis"],
+            default_value="rgbtolms (calibrated monitor)",
+            tag="stim_rgb_mapping_combo",
+            callback=lambda s, a: _update_rgb_mapping_mode(a, state),
+        )
+        dpg.add_slider_float(
+            label="Radius (deg)",
+            min_value=0.02,
+            max_value=0.5,
+            default_value=0.15,
+            tag="stim_radius",
+            callback=lambda s, a: state.stimulus_params.update({"radius_deg": a}),
+        )
+        dpg.add_button(
+            label="Load image stimulus...",
+            width=-1,
+            tag="stim_load_image_btn",
+            callback=lambda: dpg.show_item("stim_image_dialog"),
+        )
+        with dpg.tree_node(label="Advanced", default_open=False, tag="stim_advanced_node"):
                 dpg.add_slider_float(label="X center (deg)", min_value=-0.5, max_value=0.5, default_value=0.0,
                     tag="stim_x_deg", callback=lambda s, a: state.stimulus_params.update({"x_deg": a}))
                 dpg.add_slider_float(label="Y center (deg)", min_value=-0.5, max_value=0.5, default_value=0.0,
@@ -739,7 +1036,7 @@ def _build_center_viewport(display_width: int, display_height: int) -> None:
             dpg.add_image(VIEWPORT_TEX_TAG, tag=VIEWPORT_IMAGE_TAG, width=400, height=400)
             # Bottom 3D toolbar (shown only in 3D mode).
             with dpg.group(horizontal=True, tag="viewer3d_toolbar"):
-                dpg.add_button(label="Zoom -", width=60, callback=lambda: _shared.get("vispy_viewer") and HAS_VISPY and _shared["vispy_viewer"].add_zoom(+0.5))
+                dpg.add_button(label="Zoom -", width=60, callback=lambda: _shared.get("vispy_viewer") and HAS_VISPY and _shared["vispy_viewer"].add_zoom(-0.5))
                 dpg.add_slider_float(
                     label="",
                     width=140,
@@ -749,7 +1046,7 @@ def _build_center_viewport(display_width: int, display_height: int) -> None:
                     tag="viewer3d_zoom_slider",
                     callback=lambda s, a: _shared.get("vispy_viewer") and HAS_VISPY and setattr(_shared["vispy_viewer"]._camera, "distance", float(a)),
                 )
-                dpg.add_button(label="Zoom +", width=60, callback=lambda: _shared.get("vispy_viewer") and HAS_VISPY and _shared["vispy_viewer"].add_zoom(-0.5))
+                dpg.add_button(label="Zoom +", width=60, callback=lambda: _shared.get("vispy_viewer") and HAS_VISPY and _shared["vispy_viewer"].add_zoom(+0.5))
                 dpg.add_spacer(width=8)
                 dpg.add_button(label="⟲ Reset", width=70, callback=lambda: _reset_camera("iso"))
                 dpg.add_checkbox(
@@ -806,16 +1103,39 @@ def _update_stats(state: SimState) -> None:
                 pad = max((mx - mn) * 0.1, 1.0) if mx > mn else 1.0
                 dpg.set_axis_limits("spark_x", 0.0, max(1, len(hist) - 1))
                 dpg.set_axis_limits("spark_y", max(0, mn - pad), mx + pad)
-    # RGC histogram
-    if state.fr_midget_on_L is not None and dpg.does_item_exist("hist_series"):
+    # RGC histogram (throttled and subsampled to avoid slowdown when RGC is very active)
+    _shared["hist_update_tick"] = _shared.get("hist_update_tick", 0) + 1
+    if state.fr_midget_on_L is not None and dpg.does_item_exist("hist_series") and (_shared["hist_update_tick"] % 3 == 0):
         flat = state.fr_midget_on_L.flatten()
         flat = flat[np.isfinite(flat)]
+        max_hist_points = 2048
+        if len(flat) > max_hist_points:
+            step = len(flat) // max_hist_points
+            flat = flat[::step][:max_hist_points]
         if len(flat) > 0:
-            bins = 16
             mn, mx = float(np.min(flat)), float(np.max(flat))
+            if not np.isfinite(mn):
+                mn = 0.0
+            if not np.isfinite(mx):
+                mx = mn + 1.0
             if mx <= mn:
-                mx = mn + 1.0  # avoid "too many bins for data range"
-            counts, edges = np.histogram(flat, bins=bins, range=(mn, mx))
+                mx = mn + 1.0
+                bins = 2
+            else:
+                # NumPy can raise "too many bins" when range is tiny (e.g. 1e-20)
+                min_range = max(1e-9, np.finfo(np.float64).tiny * 20)
+                if (mx - mn) < min_range:
+                    mx = mn + 1.0
+                    bins = 2
+                else:
+                    bins = 16
+            try:
+                counts, edges = np.histogram(flat, bins=bins, range=(mn, mx))
+            except ValueError:
+                # Fallback if NumPy still rejects (e.g. version-dependent)
+                bins = 2
+                mx = mn + 1.0
+                counts, edges = np.histogram(flat, bins=bins, range=(mn, mx))
             xs = [(float(edges[i]) + float(edges[i + 1])) / 2 for i in range(bins)]
             counts_list = [float(c) for c in counts]
             dpg.set_value("hist_series", [xs, counts_list])
@@ -1068,6 +1388,7 @@ def run_app() -> None:
     _shared["mouse_down_pos"] = None  # (x, y) when button went down; used to avoid pick on 3D drag
     _shared["stats_tick"] = 0  # throttle stats update
     _shared["debug_3d_prints"] = 0  # limit debug logging for 3D frames
+    _shared["all_layers_rgba"] = None  # composite canvas for 2D All Layers view
 
     if not SIM_ON_MAIN_THREAD and state_back is not None:
         threading.Thread(target=_sim_worker, daemon=True).start()
@@ -1167,8 +1488,22 @@ def run_app() -> None:
                     if 0 <= local_x < img_w and 0 <= local_y < img_h:
                         cp = _ensure_cell_positions(state)
                         grid_h, grid_w = state.grid_shape()
-                        grid_x = local_x / img_w * grid_w
-                        grid_y = local_y / img_h * grid_h
+                        view_mode_click = dpg.get_value("view_mode_combo") if dpg.does_item_exist("view_mode_combo") else "2D Heatmap"
+                        if view_mode_click == "2D All Layers":
+                            comp_w = 4 * grid_w
+                            comp_h = 2 * grid_h
+                            cx = local_x / img_w * comp_w
+                            cy = local_y / img_h * comp_h
+                            tile_w = grid_w
+                            tile_h = grid_h
+                            # Map click within any tile back to underlying grid coordinates.
+                            intra_x = cx - tile_w * float(int(cx // tile_w))
+                            intra_y = cy - tile_h * float(int(cy // tile_h))
+                            grid_x = intra_x
+                            grid_y = intra_y
+                        else:
+                            grid_x = local_x / img_w * grid_w
+                            grid_y = local_y / img_h * grid_h
                         pick_radius_px = max(20.0, grid_w / 64.0)  # scale with grid so large fields are pickable
                         pick_layer, cell_id = pick_nearest_cell_any_layer(cp, grid_x, grid_y, pick_radius_px)
                         cache = _shared.get("connectivity_cache")
@@ -1226,7 +1561,7 @@ def run_app() -> None:
                 if dpg.does_item_exist("rf_dog_result"):
                     dpg.set_value("rf_dog_result", f"Error: {e}")
 
-        # Render: 2D heatmap or 3D stack (Vispy)
+        # Render: 2D heatmaps (single/all layers) or 3D stack (Vispy)
         view_mode = dpg.get_value("view_mode_combo") if dpg.does_item_exist("view_mode_combo") else "2D Heatmap"
         if view_mode == "3D Stack":
             # Start with a visible fallback frame so we can always see that
@@ -1320,90 +1655,68 @@ def run_app() -> None:
             # 3D returns uint8; DPG wants float 0-1
             tex_data = (img.astype(np.float32) / 255.0).flatten()
         else:
-            # 2D heatmap: combo value is display label; resolve to internal key (bio_constants)
-            layer_display = dpg.get_value("layer_combo") if dpg.does_item_exist("layer_combo") else LAYER_KEY_TO_DISPLAY.get("RGC Firing (L)", "RGC Firing (L)")
-            layer_name = LAYER_DISPLAY_TO_KEY.get(layer_display, layer_display)
-            if dpg.does_item_exist("layer_convergence_note"):
-                if dpg.does_item_exist("show_convergence_ratios") and dpg.get_value("show_convergence_ratios"):
-                    _set_convergence_note(layer_name)
-                else:
+            # 2D view modes share the same dynamic texture; branch on single vs all layers.
+            if view_mode == "2D All Layers":
+                # No layer-specific overlays or convergence notes in composite mode.
+                if dpg.does_item_exist("layer_convergence_note"):
                     dpg.set_value("layer_convergence_note", "")
-            if layer_name == "Stimulus":
-                stim_type = state.stimulus_params.get("type", "spot")
-                # For image stimuli, show the loaded RGB image directly so the
-                # user sees the true pixel colors rather than the spectral
-                # centroid approximation used internally for cones.
-                if stim_type == "image" and "image_mask" in state.stimulus_params:
-                    img = np.asarray(state.stimulus_params["image_mask"], dtype=np.float32)
-                    h, w = state.grid_shape()
-                    if img.ndim == 2:
-                        img = np.stack([img, img, img], axis=-1)
-                    if img.shape[0] != h or img.shape[1] != w:
-                        img = np.resize(img, (h, w, img.shape[2]))
-                    vmax = float(img.max()) if img.size > 0 else 0.0
-                    if vmax > 1.0:
-                        img = img / 255.0
-                    img = np.clip(img, 0.0, 1.0)
-                    # Apply global intensity as a simple gain for display.
-                    gain = float(state.stimulus_params.get("intensity", 1.0))
-                    rgb = np.clip(img * gain, 0.0, 1.0)
-                    rgba = np.zeros((h, w, 4), dtype=np.float32)
-                    rgba[..., :3] = rgb
-                    rgba[..., 3] = 1.0
-                elif state.stimulus_spectrum is not None:
-                    wl = state.config.spectral.wavelengths
-                    rgba = spectrum_to_stimulus_rgba(state.stimulus_spectrum, wl)
+                comp_rgba = _render_all_layers_composite(state)
+                rgba = _resize_rgba_to_display(comp_rgba, display_h, display_w)
+            else:
+                # 2D single-layer heatmap: combo value is display label; resolve to internal key.
+                layer_display = dpg.get_value("layer_combo") if dpg.does_item_exist("layer_combo") else LAYER_KEY_TO_DISPLAY.get("RGC Firing (L)", "RGC Firing (L)")
+                layer_name = LAYER_DISPLAY_TO_KEY.get(layer_display, layer_display)
+                if dpg.does_item_exist("layer_convergence_note"):
+                    if dpg.does_item_exist("show_convergence_ratios") and dpg.get_value("show_convergence_ratios"):
+                        _set_convergence_note(layer_name)
+                    else:
+                        dpg.set_value("layer_convergence_note", "")
+                if layer_name == "Stimulus":
+                    rgba = _render_stimulus_rgba(state)
+                elif layer_name in ("Cones L", "Cones M", "Cones S"):
+                    # Inverted: activity = 1 - cone; shared max = 1.0 (same as All Layers).
+                    cone_L = np.asarray(state.cone_L if state.cone_L is not None else np.zeros(state.grid_shape(), dtype=np.float32), dtype=np.float32).copy()
+                    cone_M = np.asarray(state.cone_M if state.cone_M is not None else np.zeros(state.grid_shape(), dtype=np.float32), dtype=np.float32).copy()
+                    cone_S = np.asarray(state.cone_S if state.cone_S is not None else np.zeros(state.grid_shape(), dtype=np.float32), dtype=np.float32).copy()
+                    if dpg.does_item_exist("biological_scale_2d") and dpg.get_value("biological_scale_2d"):
+                        for key, arr in [("Cones L", cone_L), ("Cones M", cone_M), ("Cones S", cone_S)]:
+                            dkey = LAYER_KEY_TO_DENSITY.get(key)
+                            if dkey and dkey in RELATIVE_DENSITY:
+                                scale = RELATIVE_DENSITY["rgc"] / RELATIVE_DENSITY[dkey]
+                                arr *= scale
+                    grid = cone_L if layer_name == "Cones L" else (cone_M if layer_name == "Cones M" else cone_S)
+                    grid = 1.0 - np.clip(grid, 0.0, 1.0)
+                    rgba = _grid_to_rgba_absolute_firing(grid, 1.0, _get_heatmap_colormap())
                 else:
-                    h, w = state.grid_shape()
-                    rgba = np.zeros((h, w, 4), dtype=np.float32)
-            else:
-                layer_map = {
-                    "Cones L": (state.cone_L, "firing"),
-                    "Cones M": (state.cone_M, "firing"),
-                    "Cones S": (state.cone_S, "firing"),
-                    "Horizontal": (state.h_activation, "firing"),
-                    "Bipolar ON": (state.bp_diffuse_on, "firing"),
-                    "Amacrine": (state.amacrine_aii, "firing"),
-                    "RGC Firing (L)": (state.fr_midget_on_L, "firing"),
-                }
-                layer, colormap = layer_map.get(layer_name, (state.fr_midget_on_L, "firing"))
-                if layer is None:
-                    layer = np.zeros(state.grid_shape(), dtype=np.float32)
-                # Optional: weight by convergence so signal compression is visible (bio_constants)
-                if dpg.does_item_exist("biological_scale_2d") and dpg.get_value("biological_scale_2d"):
-                    dkey = LAYER_KEY_TO_DENSITY.get(layer_name)
-                    if dkey and dkey in RELATIVE_DENSITY:
-                        scale = RELATIVE_DENSITY["rgc"] / RELATIVE_DENSITY[dkey]
-                        layer = np.clip(layer.astype(np.float32) * scale, 0.0, None)
-                rgba = grid_to_rgba(layer, colormap=colormap)
-            # Overlay: selected RGC dendritic field and cone/bipolar/amacrine scatter
-            picked = _shared.get("picked_cell")
-            if picked is not None and len(picked) >= 3:
-                _, _, conn_result = picked
-                if isinstance(conn_result, RGCConnectivityResult):
-                    cp = _shared.get("cell_positions")
-                    if cp is not None:
-                        overlay = draw_cell_overlay(
-                            state.grid_shape(),
-                            cp,
-                            conn_result,
-                            state.config.retina.microns_per_px,
-                        )
-                        mask = overlay[..., 3:4] > 0
-                        rgba = np.where(mask, overlay, rgba)
-            # Scale bar (100 µm default; Masland 2012, Curcio et al. 1992)
-            draw_scale_bar_rgba(
-                rgba,
-                microns_per_px=state.config.retina.microns_per_px,
-                scale_bar_um=float(getattr(state.config.viewer_3d, "scale_bar_um", 100.0)),
-                position="bottom_left",
-            )
-            # Display: block-average downsample if grid > MAX_DISPLAY_SIDE, else upscale
-            gh, gw = rgba.shape[0], rgba.shape[1]
-            if gh > MAX_DISPLAY_SIDE or gw > MAX_DISPLAY_SIDE:
-                rgba = block_average_downsample_rgba(rgba, MAX_DISPLAY_SIDE)
-            else:
-                rgba = np.repeat(np.repeat(rgba, DISPLAY_SCALE, axis=0), DISPLAY_SCALE, axis=1)
+                    rgba = _render_layer_rgba(state, layer_name)
+                # Overlay: selected RGC dendritic field and cone/bipolar/amacrine scatter
+                picked = _shared.get("picked_cell")
+                if picked is not None and len(picked) >= 3:
+                    _, _, conn_result = picked
+                    if isinstance(conn_result, RGCConnectivityResult):
+                        cp = _shared.get("cell_positions")
+                        if cp is not None:
+                            overlay = draw_cell_overlay(
+                                state.grid_shape(),
+                                cp,
+                                conn_result,
+                                state.config.retina.microns_per_px,
+                            )
+                            mask = overlay[..., 3:4] > 0
+                            rgba = np.where(mask, overlay, rgba)
+                # Scale bar (100 µm default; Masland 2012, Curcio et al. 1992)
+                draw_scale_bar_rgba(
+                    rgba,
+                    microns_per_px=state.config.retina.microns_per_px,
+                    scale_bar_um=float(getattr(state.config.viewer_3d, "scale_bar_um", 100.0)),
+                    position="bottom_left",
+                )
+                # Display: block-average downsample if grid > MAX_DISPLAY_SIDE, else upscale
+                gh, gw = rgba.shape[0], rgba.shape[1]
+                if gh > MAX_DISPLAY_SIDE or gw > MAX_DISPLAY_SIDE:
+                    rgba = block_average_downsample_rgba(rgba, MAX_DISPLAY_SIDE)
+                else:
+                    rgba = np.repeat(np.repeat(rgba, DISPLAY_SCALE, axis=0), DISPLAY_SCALE, axis=1)
             tex_data = np.ascontiguousarray(rgba.astype(np.float32)).flatten()
             img = (rgba * 255).astype(np.uint8)
 

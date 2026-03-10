@@ -74,15 +74,26 @@ def tick(state: SimState, dt: float) -> None:
         retina=cfg.retina,
     )
 
-    # 2. Cone responses via spectral dot product
+    # 2. Cone responses via spectral dot product, then Naka-Rushton saturation
     stim = state.stimulus_spectrum  # (H, W, L)
     SENS_L = cfg.spectral.sens_L.astype(np.float32)
     SENS_M = cfg.spectral.sens_M.astype(np.float32)
     SENS_S = cfg.spectral.sens_S.astype(np.float32)
 
-    state.cone_L = np.einsum("hwl,l->hw", stim, SENS_L, optimize=True)
-    state.cone_M = np.einsum("hwl,l->hw", stim, SENS_M, optimize=True)
-    state.cone_S = np.einsum("hwl,l->hw", stim, SENS_S, optimize=True)
+    linear_L = np.einsum("hwl,l->hw", stim, SENS_L, optimize=True)
+    linear_M = np.einsum("hwl,l->hw", stim, SENS_M, optimize=True)
+    linear_S = np.einsum("hwl,l->hw", stim, SENS_S, optimize=True)
+
+    sigma = getattr(cfg.spectral, "cone_saturation_sigma", 0.0)
+    if sigma > 0:
+        # Naka-Rushton: R = I / (I + sigma) so cone response scales with intensity and saturates.
+        state.cone_L = np.clip(linear_L / (linear_L + sigma), 0.0, 1.0).astype(np.float32)
+        state.cone_M = np.clip(linear_M / (linear_M + sigma), 0.0, 1.0).astype(np.float32)
+        state.cone_S = np.clip(linear_S / (linear_S + sigma), 0.0, 1.0).astype(np.float32)
+    else:
+        state.cone_L = linear_L.astype(np.float32)
+        state.cone_M = linear_M.astype(np.float32)
+        state.cone_S = linear_S.astype(np.float32)
 
     # 3. Horizontal cell pooling (cone_to_horizontal scales cone input)
     cw = getattr(cfg, "connectivity_weights", None)
@@ -99,10 +110,20 @@ def tick(state: SimState, dt: float) -> None:
         h_lm * cfg.horizontal.alpha_lm * h_to_cone + h_s * cfg.horizontal.alpha_s * h_to_cone
     )
 
-    # 4. Horizontal → cone feedback (surround)
-    state.cone_L_eff = state.cone_L - cfg.horizontal.alpha_lm * state.h_activation
-    state.cone_M_eff = state.cone_M - cfg.horizontal.alpha_lm * state.h_activation
-    state.cone_S_eff = state.cone_S - cfg.horizontal.alpha_s * state.h_activation
+    # 4. Horizontal → cone feedback (surround). Rectify so center is not over-suppressed
+    # (avoids a bright ring at the spot edge; cone output is non-negative in standard models).
+    state.cone_L_eff = np.maximum(
+        0.0,
+        state.cone_L - cfg.horizontal.alpha_lm * state.h_activation,
+    ).astype(np.float32)
+    state.cone_M_eff = np.maximum(
+        0.0,
+        state.cone_M - cfg.horizontal.alpha_lm * state.h_activation,
+    ).astype(np.float32)
+    state.cone_S_eff = np.maximum(
+        0.0,
+        state.cone_S - cfg.horizontal.alpha_s * state.h_activation,
+    ).astype(np.float32)
 
     # 5. Bipolar responses (cone_to_bipolar scales effective cone input)
     cone_to_bp = cw.cone_to_bipolar if cw else 1.0
