@@ -1,0 +1,438 @@
+#!/usr/local/bin/python
+# By Judah B. De Paula
+# May 20, 2004
+# judah@cs.utexas.edu
+# Script to convert an RGB image to an LMS activity.
+# An RGB pixel has to go through two filters to get an LMS pixel:
+#  1. RGB pixel is converted to emission spectrum using a specified monitor
+#  2. Emission spectrum is sampled using LMS curves
+# REQUIRED PACKAGES
+#  Numeric
+#  PIL
+
+import string, re, sys, glob, time, optparse, copy, os
+import ImageFile, Image  # PIL
+from Numeric import *
+
+L_EXTENSION = '_lms_0' #Long
+M_EXTENSION = '_lms_1' #Medium
+S_EXTENSION = '_lms_2' #Short
+DEBUG = False # True
+GAMMA = 2.2
+# Originally written using complete linear algebra matrix
+# multiplications for each luminosity value.  Rewritten to use a new
+# function that uses the assumption that the gamma function is smooth,
+# and that once the activity triple for LMS is calculated for the
+# maximum electron gun emission in isolation, a single linear
+# combination of the three maximum R,G,B triples will suffice.
+# RGB_to_LMS() and fast_compute_lms() will not always have exactly the
+# same value due to rounding effects, but tests show that the variance
+# is is not greater than +/- 1.
+FAST_COMPUTE = True
+
+# Conversion filter matrix
+LMS = []       # Approximately 400x4
+RGB = []       # Approximately 400x4
+gRGB = []      # 256 * RGB.  Lookup table for gamma function
+GAMMA_FCN = [] # Made global so the gammas can be saved. 
+lms_hash = {}  # Store computed LMS activation for possible reuse.
+
+
+def process_command_line():
+    """Pull the parameters from the commandline"""
+    parser = optparse.OptionParser()
+    parser.add_option('-m', '--matlab', action='store_true', default=False, dest='matlab',
+                      help='Generate matlab readable matrix file')
+    parser.add_option('-c', '--cheader', action='store_true', default=False, dest='cheader',
+                      help='Generate a c header file with the conversion matrices.')
+    parser.add_option('-p', '--prefix', dest="prefix", 
+                      help='Use PREFIX for output file names.', metavar="PREFIX")
+    options, args = parser.parse_args()
+    #if DEBUG:
+    #    print 'Options', options, 'Args', args
+    return (options, args)
+
+
+# Expected file format is text file with each line having a four-tuple
+# with a possible comma and spaces to delimit.  Read it all into an array.
+# First number is wavelength in nm, other numbers are floats.
+def read_triple(filename):
+    f = open(filename,'r')
+    pat = re.findall('([-+\deE\.]+)[,\s]+'
+                     '([-+\deE\.]+)[,\s]+'
+                     '([-+\deE\.]+)[,\s]+'
+                     '([-+\weE\.]+)',f.read())
+    f.close()
+    wavelength = []
+    for x in pat:
+        wavelength.append([float(x[0]), float(x[1]), float(x[2]), float(x[3])])
+    return array(wavelength)
+
+
+# Some of the input data are not single-steped so I need to double the
+# number of elements.  This assumes that every other whole number is
+# skipped, so 2,4,6,8 becomes 2,3,4,5,6,7,8.
+def stretch_array(inarray):
+    temp_array = list(inarray)
+    new_array = []
+    for x in temp_array:
+        w,x1,x2,x3 = x
+        new_array.append(x)
+        new_array.append([(w+1),x1,x2,x3])
+    return array(new_array)
+
+
+# In case I want to make the gamma function more complicated later.
+def gamma(x): return pow(x,GAMMA)
+
+# Takes the maximum luminosiy found in RGB and scales for each value
+# of x in the gamma function.  Creates a 256xWAVELENGTHSx4 matrix which
+# can be accessed as a lookup table.
+def generate_gRGB():
+    global RGB, gRGB, GAMMA_FCN
+    gRGB = array([list(RGB)] * 256)          # Duplicates 1x400 to 256x400
+    if DEBUG: print 'gRGB shape', gRGB.shape 
+    for i in range(256):                     # Create the Gamma multipliers
+        GAMMA_FCN.append(gamma(i))
+    GAMMA_FCN = array(GAMMA_FCN)
+    GAMMA_FCN = GAMMA_FCN / max(GAMMA_FCN)   # Normalize
+    for i in range(256):                     # Reduce luminosity of x by Gamma
+        gRGB[i,:,1:4] = gRGB[i,:,1:4] * GAMMA_FCN[i]
+        
+
+# Load the functions from the file, then trim to range that overlaps
+# and normalize.
+def load_filters():
+    # Hack to get it to load the directories even if called remotely.
+    # Must be changed if the length of the filename changes.
+    p = sys.argv[0]
+    p = p[0:len(p)-8]
+    
+    global LMS
+    global RGB
+    LMS = read_triple(p + 'LMS.txt')
+    RGB = read_triple(p + 'RGB.txt')
+
+    if DEBUG:
+        print 'LMS Wavelengths: ', LMS[0,0], '->', LMS[shape(LMS)[0]-1,0]
+        print 'RGB Wavelengths: ', RGB[0,0], '->', RGB[shape(RGB)[0]-1,0]
+
+    # Where only one funcion is defined the other will zero it out,
+    # so trim for only the overlapping regions
+    active_min = max(min(LMS[:,0]),min(RGB[:,0]))
+    active_max = min(max(LMS[:,0]),max(RGB[:,0]))
+
+    # The following is because the specrometer does every 2 nm instead
+    # of every nm.  May have to change if the dataset changes.
+    RGB = stretch_array(RGB)
+
+    l, u = 0, shape(RGB)[0]-1       # Don't know of a better way to find min.
+    while RGB[l,0] < active_min: l = l + 1
+    while RGB[u,0] > active_max: u = u - 1
+    RGB = RGB[l:u+1,:]
+    l, u = 0,shape(LMS)[0]-1        # Repeated code.  Write function?
+    while LMS[l,0] < active_min: l = l + 1
+    while LMS[u,0] > active_max: u = u - 1
+    LMS = LMS[l:u+1,:]
+
+    if DEBUG: print 'Active Region  : ', active_min,'->', active_max
+
+    # Safety check in case the stepsize is off, and the number of elements
+    # in LMS does not equal the number of elements in RGB.
+    if LMS[:,0] != RGB[:,0]:
+        print 'Fatal error: RGB(x,:) not equal to LMS(x,:)'
+        sys.exit()
+
+    # Normalize RGB so that the sum of the three areas equals 1.
+    RGB[:,1:4] = RGB[:,1:4] / sum(sum(RGB[:,1:4]))
+    # Normalize each sensitivity curve of LMS to a peak sensitivity of 1.
+    LMS[:,1:2] = LMS[:,1:2] / max(max(LMS[:,1:2]))
+    LMS[:,2:3] = LMS[:,2:3] / max(max(LMS[:,2:3]))
+    LMS[:,3:4] = LMS[:,3:4] / max(max(LMS[:,3:4]))
+
+    # There are different ways to normalize the LMS acivity cones.  One would
+    # be to do as with the RGB: normalize the area of all three curves to sum
+    # to 1.  Another would be to normalize the maximally activated to 1, then
+    # the others cones relative to that.  I think the best way is to normalize
+    # the area of each cone type to the maximal activity it may ever get.
+    # This would make RGB(255,255,255) --> LMS(255,255,255)
+    lum = sum(transpose(RGB[:,1:4]))     # Emission vector of CRT white light.
+    l_activity = sum(LMS[:,1] * lum)
+    m_activity = sum(LMS[:,2] * lum)
+    s_activity = sum(LMS[:,3] * lum)
+    LMS[:,1] = LMS[:,1] / l_activity
+    LMS[:,2] = LMS[:,2] / m_activity
+    LMS[:,3] = LMS[:,3] / s_activity
+    generate_gRGB()
+
+    if DEBUG:
+        print 'Sum RGB(:,1:4)', sum(sum(RGB[:,1:4]))
+        print 'Max LMS(:,1)', max(LMS[:,1])
+        print 'Max LMS(:,2)', max(LMS[:,2])
+        print 'Max LMS(:,3)', max(LMS[:,3])
+        activity = sum(sum(LMS[:,1:4] * RGB[:,1:4]))
+        print 'Summed LMS Activity to RGB White light', activity
+        print 'RGB_to_LMS((255,255,255)): ', RGB_to_LMS((255,255,255))
+
+
+def read_image(filename):
+    return Image.open(filename)
+
+
+# A little help from the command line.  Should be expanded.
+#def check_param_length():
+#    help = ['-H', '--HELP', '-HELP']
+#    if (len(sys.argv) == 1
+#        | (string.upper(sys.argv[len(sys.argv)-1]) in help)):
+#        print 'Enter filename to convert to LMS.  Wildcards are accepted.'
+#        return False
+#    else:
+#        return sys.argv[1:]
+
+
+# Take in an RGB triple, return a new triple that represents the
+# LMS acivities.  0 <= r,g,b <= 255.  0 <= l,m,s <= 255
+def RGB_to_LMS(rgb):
+    global gRGB, lms_hash
+    if lms_hash.has_key(rgb):
+        return lms_hash[rgb]
+    else:
+        r,g,b = rgb
+        gamma_r = gRGB[r,:,1]
+        gamma_g = gRGB[g,:,2]
+        gamma_b = gRGB[b,:,3]
+        luminosity = gamma_r + gamma_g + gamma_b
+        l = int(round(sum(luminosity * LMS[:,1]) * 255))
+        m = int(round(sum(luminosity * LMS[:,2]) * 255))
+        s = int(round(sum(luminosity * LMS[:,3]) * 255))
+        if l > 255 | m > 255 | s > 255:
+            print 'Warning: activity > 255. Cropping to 255 (l,m,s) = ', (l,m,s)
+            if l > 255: l = 255
+            if m > 255: m = 255
+            if s > 255: s = 255
+        if l < 0 | m < 0 | s < 0:
+            print 'Warning: activity < 0. Cropping to 0 (l,m,s) = ', (l,m,s)
+            if l < 0: l = 0
+            if m < 0: m = 0
+            if s < 0: s = 0
+        # print 'RGB_to_LMS: ', rgb, '->', (l,m,s)
+        lms_hash[rgb] = (l,m,s) 
+        return (l,m,s)
+
+
+# Do some file filering given the global RGB and LMS arrays.
+# Then save to a file.  File types may be important later, but
+# just use pgm for now.
+def convert_file_to_LMS(infile, filename_prefix):
+    if glob.glob(infile):
+        print 'Converting', infile + '....',
+        sys.stdout.flush()
+        # Read in file, convert to RGB in case not already in that form,
+        # convert to a list the pixel data, create new list of transformed
+        # pixels, then paste back into original image before saving each
+        # of the three channels into different files.
+        i = read_image(infile)
+        rgb_i = i.convert('RGB')
+        rgb_pixels = list(rgb_i.getdata())
+        lms_pixels = []
+        for x in rgb_pixels:
+            if FAST_COMPUTE: lms_pixels.append(fast_compute_lms(x))
+            else: lms_pixels.append(RGB_to_LMS(x))
+        rgb_i.putdata(lms_pixels)
+        lms_i = rgb_i.split()
+        lms_i[0].save(filename_prefix + L_EXTENSION + '.pgm')
+        lms_i[1].save(filename_prefix + M_EXTENSION + '.pgm')
+        lms_i[2].save(filename_prefix + S_EXTENSION + '.pgm')
+        print 'done.'
+    else:
+        print infile, 'does not exist.'
+
+
+# Generate a MATLAB file that will save the LMS, RGB and gRGB matrices
+# and then generate three plots that show the different matrices for the
+# purposes of debugging.
+def save_matlab_matrix():
+    global LMS, RGB, gRGB
+    f = open('rgbtolms.m','w')
+    f.write('% Generated by rgbtolms.py to show calculated functions\n')
+    f.write('RGB = ' + array2string(RGB) + ';\n')
+    f.write('LMS = ' + array2string(LMS) + ';\n')
+    f.write('gRGB = zeros(256,' + str(LMS.shape[0]) + ',4);\n')
+    for i in range(256):
+        f.write('gRGB(' + str(i+1) + ',:,:) = ' + array2string(gRGB[i,:,:])
+                + ';\n')
+    f.write('''
+         figure;
+         hold on;
+         plot(RGB(:,1),RGB(:,2),'red');
+         plot(RGB(:,1),RGB(:,3),'green');
+         plot(RGB(:,1),RGB(:,4),'blue');
+         figure;
+         hold on;
+         plot(LMS(:,1),LMS(:,2),'black');
+         plot(LMS(:,1),LMS(:,3),'black');
+         plot(LMS(:,1),LMS(:,4),'black');
+         figure;
+         hold on;
+         for i = 1:256
+             plot(gRGB(i,:,1),gRGB(i,:,2));
+             plot(gRGB(i,:,1),gRGB(i,:,3));
+             plot(gRGB(i,:,1),gRGB(i,:,4));
+         end''')
+
+# Generate a C file that will save the LMS, RGB and GAMMA_FCN matrices
+def save_c_matrix():
+
+    def format_c_vector(v):
+        """Format a vector into a bracketed list"""
+        s = '{'
+        for i in range(len(v)):
+            s += '%f,' % (v[i])
+	    if i % 5 == 4: s += '\n'
+        s = s[:-1] + '}'
+        return s
+    def format_c_matrix(m):
+        """Format a matrix into a bracketed list"""
+        (r,c) = m.shape
+        s = '{'
+        for i in range(r):
+            s += format_c_vector(m[i,:]) + ',\n'
+        s = s[:-2] + '}'
+        return s
+            
+    global LMS, RGB, GAMMA_FCN
+    f = open('rgbtolms.h','w')
+    f.write('// Auto-generated by rgbtolms.py to import into LISSOM 5.0\n\n')
+    f.write('#define WAVELENGTH_POINTS %d\n\n' % (LMS.shape[0]))
+
+    f.write('//Python:  def gamma(x): return pow(x,GAMMA)  # GAMMA = 2.2\n')
+    f.write('float gamma_fcn[%d] = \n%s;\n\n'
+            % (GAMMA_FCN.shape[0],format_c_vector(GAMMA_FCN)))
+
+    tLMS = transpose(LMS[:,1:4])
+    f.write('// LMS Cone sensitivity functions\n')
+    f.write('// Stockman and Sharpe (2000) 10-deg cone fundamentals\n'
+            + '// Based on the Stiles and Burch (1959) 10-deg CMFs\n')
+    f.write('float lms_fcn[%d][%d] = \n%s;\n\n'
+            % (tLMS.shape[0],tLMS.shape[1],format_c_matrix(tLMS)))
+
+    tRGB = transpose(RGB[:,1:4])
+    f.write('// RGB Spectral Power Distribution from Sony GDM 500.\n')
+    f.write('// Provided by Tony Wilson. 2005-04-27\n')
+    f.write('float rgb_fcn[%d][%d] = \n%s;\n\n'
+            % (tRGB.shape[0],tRGB.shape[1],format_c_matrix(tRGB)))
+
+
+
+def run_tests():
+    """
+    A few tests to make sure the program is creating correct values.
+    """
+    # r,g,b = 128,0,0
+    # print '('+str(r)+','+str(g)+','+str(b)+') = ', RGB_to_LMS((r,g,b))
+    assert RGB_to_LMS((0,0,0)) == (0,0,0), "Output not matched"
+    assert RGB_to_LMS((85,85,85)) == (23,23,23), "Output not matched"
+    assert RGB_to_LMS((128,128,128)) == (56,56,56), "Output not matched"
+    assert RGB_to_LMS((170,170,170)) == (105,105,105), "Output not matched"
+    assert RGB_to_LMS((255,255,255)) == (255,255,255), "Output not matched"
+    assert RGB_to_LMS((255,0,0)) == (73,29,4), "Output not matched"
+    assert RGB_to_LMS((0,255,0)) == (140,159,14), "Output not matched"
+    assert RGB_to_LMS((0,0,255)) == (42,67,237), "Output not matched"
+
+
+def setup_fast_compute_lms():
+    """
+    Initial setup for fast_compute_lms(), to avoid redundant testing
+    """
+    global lms_hash
+    lms_hash[(255,0,0)] = RGB_to_LMS((255,0,0))
+    lms_hash[(0,255,0)] = RGB_to_LMS((0,255,0))
+    lms_hash[(0,0,255)] = RGB_to_LMS((0,0,255))
+
+def fast_compute_lms(rgb):
+    """
+    
+    Do a faster computation than RGB_to_LMS() using only the
+    activation triples for LMS with Activation at max R, Activation at
+    max G, and Activation at max B.  Does this by assuming a smooth
+    Gamma function up to the maximum emission.  The L,M, and S
+    activation triples at maximum emissions can be considered a new
+    set of monitor guns that perfectly match the retinal sensitivity.
+    The vector size of these equations are much smaller than the
+    original.
+
+    L,M,S = i^2.2
+    L,M,S = r^2.2 + g^2.2 + b^2.2
+    e^(2.2 * ln L) = r ....
+    """
+    global lms_hash
+    if lms_hash.has_key(rgb):
+        return lms_hash[rgb]
+    else:
+        (r,g,b) = rgb
+        r = r / 255.0
+        g = g / 255.0
+        b = b / 255.0
+        (lr,lg,lb) = lms_hash[(255,0,0)]
+        (mr,mg,mb) = lms_hash[(0,255,0)]
+        (sr,sg,sb) = lms_hash[(0,0,255)]
+        if r > 0: r = log(r)
+        else: lr,lg,lb = 0,0,0
+        if g > 0: g = log(g)
+        else: mr,mg,mb = 0,0,0
+        if b > 0: b = log(b)
+        else: sr,sg,sb = 0,0,0
+        eGr = exp(GAMMA * r)
+        eGg = exp(GAMMA * g)
+        eGb = exp(GAMMA * b)
+        l = int(round(eGr * lr + eGg * mr + eGb * sr))
+        m = int(round(eGr * lg + eGg * mg + eGb * sg))
+        s = int(round(eGr * lb + eGg * mb + eGb * sb))
+#        l = int(round((exp(GAMMA * r) * lr + exp(GAMMA * g) * mr +
+#                       exp(GAMMA * b) * sr)))
+#        m = int(round((exp(GAMMA * r) * lg + exp(GAMMA * g) * mg +
+#             exp(GAMMA * b) * sg)))
+#        s = int(round((exp(GAMMA * r) * lb + exp(GAMMA * g) * mb +
+#             exp(GAMMA * b) * sb)))
+        lms = (l,m,s)
+        # (r,g,b) = RGB_to_LMS(rgb)
+        lms_hash[rgb] = lms
+        # if (abs(r-l) > 1 or abs(g-m) > 1 or abs(b-s) > 1):
+        #     print rgb, '-->', lms
+    return (lms)
+
+        
+def main():
+    t = time.time()
+    options, args = process_command_line()
+    load_filters()
+
+    if FAST_COMPUTE: setup_fast_compute_lms()
+    if DEBUG: run_tests()
+
+    if os.name == 'nt':   # CMD will not expand wildcards like Linux shells. 
+        files = []
+        for f in args:
+            files += glob(f)
+    else:
+        files = copy.copy(args)
+
+
+    if files:
+        counter = 0
+        if options.prefix == None:
+            options.prefix = ''
+        for f in files:
+            counter += 1
+            filename_prefix = "%s%02d" % (options.prefix, counter)
+            convert_file_to_LMS(f,filename_prefix)
+
+    if options.matlab or options.cheader:
+        print('Generating matrix files.')
+    if options.matlab:
+        save_matlab_matrix()
+    if options.cheader:
+        save_c_matrix()
+
+    print 'Time:', time.time() - t, 'seconds.'
+main()

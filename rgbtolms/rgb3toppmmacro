@@ -1,0 +1,12 @@
+#!/usr/local/bin/python
+# Macro to run rgb3toppm multiple times on a set of files
+# that has already been spilt.  Used on the corpus of
+# images that Jim has already pulled from Image Delights.
+#
+# $Id: rgb3toppmmacro,v 1.2 2005/11/28 01:06:39 judah Exp $
+import os
+
+for i in range(74):
+    cmd = 'rgb3toppm %02d_0.pgm %02d_1.pgm %02d_2.pgm > %02d.ppm' % (i,i,i,i)
+    print cmd
+    os.system(cmd)

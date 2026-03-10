@@ -1,0 +1,14 @@
+Date: Tue, 27 Apr 2004 18:23:10 -0500 (CDT)
+From: Tony Wilson <wilson@mail.cps.utexas.edu>
+To: Judah B. De Paula <judah@cs.utexas.edu>
+Subject: Re: CRT wavelength measurements
+
+
+Judah,
+
+Here are some SPDs (spectral power distributions) that i work with the
+most.  They are from a Sony GDM 500 (or something like like that) that is
+being used in a lab i collaborate with.  The gains are rather low (to make
+black look black) so you could also use that as a guide to the weights on
+the SPDs.
+
