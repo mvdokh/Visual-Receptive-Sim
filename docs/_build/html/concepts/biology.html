@@ -1,0 +1,276 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Biological background &mdash; RGC Circuit Simulator</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
+      <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=a2671c25" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=2709fde1"></script>
+      <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+      <script>window.MathJax = {"tex": {"inlineMath": [["\\(", "\\)"]], "displayMath": [["\\[", "\\]"]]}}</script>
+      <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Model equations" href="equations.html" />
+    <link rel="prev" title="Conceptual overview" href="overview.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            RGC Circuit Simulator
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">User guide</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../user_guide/quickstart.html">Quick start</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/quickstart.html#installation">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/quickstart.html#running-the-simulator">Running the simulator</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../user_guide/interface.html">User interface</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#theory-cross-references">Theory cross-references</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#layout">Layout</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#view-mode">View mode</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#d-heatmap-mode">2D Heatmap mode</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#image-stimuli">Image stimuli</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#d-stack-signal-flow-column-mode">3D Stack (Signal Flow Column) mode</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#circuit-tuning-left-panel-bottom">Circuit tuning (left panel, bottom)</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../user_guide/interface.html#synaptic-weights">Synaptic weights</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../user_guide/interface.html#cell-parameters">Cell parameters</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#rgc-population-tab">RGC Population tab</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#stats-and-export">Stats and export</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../user_guide/examples.html">Examples and plots</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#heatmaps-same-code-as-the-app">Heatmaps (same code as the app)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#ln-firing-nonlinearity-cell-parameters">LN firing nonlinearity (cell parameters)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#synaptic-weight-sliders">Synaptic weight sliders</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#stimulus-spectrum-coloring">Stimulus spectrum coloring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#regenerating-the-figures">Regenerating the figures</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#suggested-workflows">Suggested workflows</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Concepts (theory &amp; equations)</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="overview.html">Conceptual overview</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="overview.html#signal-flow">Signal flow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="overview.html#scope">Scope</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Biological background</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#retina-and-layers">Retina and layers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#centersurround-and-receptive-fields">Center–surround and receptive fields</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#color">Color</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="#cell-type-proportions-and-convergence-ratios">Cell Type Proportions and Convergence Ratios</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#physical-scale-and-large-field-simulation">Physical scale and large-field simulation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#references">References</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="equations.html">Model equations</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#notation">Notation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#stimulus-and-cone-responses">1. Stimulus and cone responses</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="equations.html#pixel-image-stimuli">Pixel-image stimuli</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#horizontal-cell-pooling">2. Horizontal cell pooling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#cone-effective-output-centersurround">3. Cone effective output (center–surround)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#bipolar-cells-on-off-split">4. Bipolar cells (ON/OFF split)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#amacrine-lateral-inhibition">5. Amacrine lateral inhibition</a></li>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#rgc-generators-dendritic-integration">6. RGC generators (dendritic integration)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#firing-rate-ln-model">7. Firing rate (LN model)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#color-opponent-signals">8. Color opponent signals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#temporal-smoothing-rc-filter">9. Temporal smoothing (RC filter)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#parameters-reference">Parameters (reference)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Deploy</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../user_guide/deploy_github_pages.html">Documentation site</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">RGC Circuit Simulator</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Biological background</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/concepts/biology.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="biological-background">
+<h1>Biological background<a class="headerlink" href="#biological-background" title="Link to this heading"></a></h1>
+<p>This section gives <strong>conceptual</strong> background on the retinal stages implemented in the simulator. It is independent of the UI.</p>
+<section id="retina-and-layers">
+<h2>Retina and layers<a class="headerlink" href="#retina-and-layers" title="Link to this heading"></a></h2>
+<p>The vertebrate retina is a layered structure. Light passes through the inner layers to the <strong>photoreceptors</strong> (rods and cones) at the back; signals then flow back toward the <strong>ganglion cells</strong>, whose axons form the optic nerve.</p>
+<p>The simulator focuses on the cone-driven pathway in a small patch:</p>
+<ul class="simple">
+<li><p><strong>Photoreceptors (cones)</strong> — L, M, S cones sample the stimulus spectrum and produce graded (analog) signals. Their spectral sensitivities are given by cone fundamentals (e.g. Stockman &amp; Sharpe 2000).</p></li>
+<li><p><strong>Horizontal cells</strong> — Large receptive fields; they pool cone output and feed back to cones, forming a <strong>center–surround</strong> antagonism (surround suppression).</p></li>
+<li><p><strong>Bipolar cells</strong> — ON and OFF types split the sign of the cone signal (ON: positive; OFF: negative, often via sign-inverting synapses). Midget bipolars have small dendritic fields; diffuse (parasol-path) bipolars pool over a larger area.</p></li>
+<li><p><strong>Amacrine cells</strong> — AII and other amacrines provide <strong>lateral inhibition</strong>: they pool bipolar (and sometimes cone) activity and subtract from the bipolar drive to ganglion cells, shaping temporal and spatial tuning.</p></li>
+<li><p><strong>Retinal ganglion cells (RGCs)</strong> — Integrate bipolar drive minus amacrine inhibition over a dendritic field (Gaussian in the model), then pass through a nonlinearity to produce a <strong>firing rate</strong>. Midget RGCs (small field) and parasol RGCs (larger field) correspond to the midget and parasol pathways in the code.</p></li>
+</ul>
+</section>
+<section id="centersurround-and-receptive-fields">
+<h2>Center–surround and receptive fields<a class="headerlink" href="#centersurround-and-receptive-fields" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p><strong>Center</strong>: Direct cone → bipolar path (after horizontal feedback) gives the “center” of the receptive field.</p></li>
+<li><p><strong>Surround</strong>: Horizontal cells pool over a larger area and subtract from cone output, so the effective cone signal is center minus surround.</p></li>
+<li><p><strong>RGC receptive field</strong>: Shaped by bipolar pooling (and amacrine inhibition); in the model this is a Gaussian kernel. A <strong>receptive field (RF) probe</strong> (probe sweep and difference-of-Gaussians fit on simulated RGC output) is implemented in the simulation layer and covered by tests; it is not tied to a dedicated GUI panel in the current interface.</p></li>
+</ul>
+</section>
+<section id="color">
+<h2>Color<a class="headerlink" href="#color" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p><strong>L, M, S</strong> cones have different spectral sensitivities; the simulator uses L/M/S fundamentals to convert a spectrum to L, M, S responses.</p></li>
+<li><p><strong>L−M</strong> and <strong>S−(L+M)</strong> are computed as color-opponent signals (e.g. at the RGC output and from effective cone signals) for analysis and display; the core pipeline does not implement explicit color-opponent circuitry beyond this.</p></li>
+</ul>
+<p>Parameter names in the code (e.g. <span class="math notranslate nohighlight">\(\sigma\)</span>, <span class="math notranslate nohighlight">\(\alpha\)</span>, <span class="math notranslate nohighlight">\(\gamma\)</span>) correspond to spatial scales and coupling strengths; see <a class="reference internal" href="equations.html"><span class="doc">Model equations</span></a> for their roles in the math.</p>
+</section>
+</section>
+<section id="cell-type-proportions-and-convergence-ratios">
+<h1>Cell Type Proportions and Convergence Ratios<a class="headerlink" href="#cell-type-proportions-and-convergence-ratios" title="Link to this heading"></a></h1>
+<p>The simulator’s layered architecture reflects the anatomical organization
+of the mammalian retina, where cell-type abundance and convergence ratios
+are well-characterized and directly determine the computational properties
+of each processing stage. All numerical constants are centralized in
+<code class="docutils literal notranslate"><span class="pre">src/simulation/bio_constants.py</span></code> and imported by both the 2D and 3D
+viewers to ensure consistency.</p>
+<p><strong>Photoreceptors</strong>
+The human retina contains approximately 92 million rods and 4.6 million
+cones per eye (Curcio et al., 1990), yielding a rod:cone ratio of ~20:1.
+Cone subtypes are distributed as approximately 64% L, 32% M, and 2% S
+(Curcio et al., 1991). This spectral imbalance is reflected in the
+simulator’s cone fundamental weighting and in the relative density of
+cone-type units rendered in both viewers.</p>
+<p><strong>Convergence to RGCs</strong>
+Approximately 1 million RGCs receive input from ~96 million
+photoreceptors, giving an overall convergence ratio of ~100:1
+(Masland, 2012). This ratio is not uniform: in the fovea, midget RGCs
+receive private-line input from 1–2 cones (~1:1), while parasol RGCs
+in the periphery integrate across up to 30 cones. This gradient is
+controlled in the simulator via <code class="docutils literal notranslate"><span class="pre">sigma_dend</span></code> and is visualized in
+both the 2D convergence overlay and the 3D connectivity fan-in lines.
+Switch between foveal and peripheral modes using the Fovea/Periphery
+toggle in the UI.</p>
+<p><strong>Inner Nuclear Layer Proportions</strong>
+In the mammalian INL, cell-type proportions are approximately:
+bipolar ~41%, amacrine ~39%, Müller glia ~16%, horizontal ~3%
+(Masland &amp; Raviola, 1998). The dominance of bipolar and amacrine
+cells over horizontal cells is reflected in the relative layer
+densities rendered in both viewers.</p>
+<section id="physical-scale-and-large-field-simulation">
+<h2>Physical scale and large-field simulation<a class="headerlink" href="#physical-scale-and-large-field-simulation" title="Link to this heading"></a></h2>
+<p>For large-field mode (e.g. 2048×2048 px at 4 µm/px ≈ 28° patch), scale parameters in
+<code class="docutils literal notranslate"><span class="pre">bio_constants.py</span></code> are grounded in the following:</p>
+<ul class="simple">
+<li><p><strong>Drasdo &amp; Fowler (1974)</strong> — 1° of visual angle ≈ 290 µm on the human retina
+(<code class="docutils literal notranslate"><span class="pre">MICRONS_PER_DEGREE</span></code>). Used to convert grid extent to degrees.</p></li>
+<li><p><strong>Curcio &amp; Allen (1990)</strong> — RGC density by eccentricity; parasol ~150 cells/mm²,
+midget ~600 cells/mm² at ~10° (used for sparse RGC lattice spacing).</p></li>
+<li><p><strong>Dacey (1993)</strong> — Midget/parasol dendritic field scaling with eccentricity.</p></li>
+<li><p><strong>Watanabe &amp; Rodieck (1989)</strong> — Parasol dendritic field diameter ≈ 100 + 20×ecc (µm).</p></li>
+</ul>
+<p>Eccentricity-dependent formulas (e.g. parasol radius, midget radius) are implemented
+in <code class="docutils literal notranslate"><span class="pre">src/simulation/scale.py</span></code>.</p>
+</section>
+<section id="references">
+<h2>References<a class="headerlink" href="#references" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p>Curcio, C. A., Sloan, K. R., Kalina, R. E., &amp; Hendrickson, A. E. (1990).
+Human photoreceptor topography. <em>J Comp Neurol</em> 292(4):497–523.
+<a class="reference external" href="https://doi.org/10.1002/cne.902920402">https://doi.org/10.1002/cne.902920402</a></p></li>
+<li><p>Curcio, C. A., Allen, K. A., Sloan, K. R., et al. (1991).
+Distribution and morphology of human cone photoreceptors stained with
+anti-opsin antibodies. <em>J Comp Neurol</em> 312(4):610–624.
+<a class="reference external" href="https://doi.org/10.1002/cne.903120411">https://doi.org/10.1002/cne.903120411</a></p></li>
+<li><p>Masland, R. H. &amp; Raviola, E. (1998).
+Confronting complexity: strategies for understanding the microcircuitry
+of the retina. <em>Annu Rev Neurosci</em> <strong>23</strong>:249–284.
+<a class="reference external" href="https://doi.org/10.1146/annurev.neuro.23.1.249">https://doi.org/10.1146/annurev.neuro.23.1.249</a></p></li>
+<li><p>Masland, R. H. (2012).
+The neuronal organization of the retina. <em>Neuron</em> 76(2):266–280.
+<a class="reference external" href="https://doi.org/10.1016/j.neuron.2012.10.002">https://doi.org/10.1016/j.neuron.2012.10.002</a></p></li>
+</ul>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="overview.html" class="btn btn-neutral float-left" title="Conceptual overview" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="equations.html" class="btn btn-neutral float-right" title="Model equations" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright RGC Circuit Simulator contributors.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

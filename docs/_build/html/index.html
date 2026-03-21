@@ -1,0 +1,259 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RGC Circuit Simulator &mdash; RGC Circuit Simulator</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
+      <link rel="stylesheet" type="text/css" href="_static/custom.css?v=a2671c25" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=2709fde1"></script>
+      <script src="_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Quick start" href="user_guide/quickstart.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="#" class="icon icon-home">
+            RGC Circuit Simulator
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">User guide</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="user_guide/quickstart.html">Quick start</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/quickstart.html#installation">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/quickstart.html#running-the-simulator">Running the simulator</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="user_guide/interface.html">User interface</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#theory-cross-references">Theory cross-references</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#layout">Layout</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#view-mode">View mode</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#d-heatmap-mode">2D Heatmap mode</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#image-stimuli">Image stimuli</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#d-stack-signal-flow-column-mode">3D Stack (Signal Flow Column) mode</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#circuit-tuning-left-panel-bottom">Circuit tuning (left panel, bottom)</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="user_guide/interface.html#synaptic-weights">Synaptic weights</a></li>
+<li class="toctree-l3"><a class="reference internal" href="user_guide/interface.html#cell-parameters">Cell parameters</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#rgc-population-tab">RGC Population tab</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#stats-and-export">Stats and export</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="user_guide/examples.html">Examples and plots</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#heatmaps-same-code-as-the-app">Heatmaps (same code as the app)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#ln-firing-nonlinearity-cell-parameters">LN firing nonlinearity (cell parameters)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#cone-fundamentals-image-bases-and-monochromatic-sweep">Cone fundamentals, image bases, and monochromatic sweep</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#connectivity-weight-sensitivity-reduced-1d-chain">Connectivity weight sensitivity (reduced 1D chain)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#regenerating-the-figures">Regenerating the figures</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#suggested-workflows">Suggested workflows</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Concepts (theory &amp; equations)</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="concepts/overview.html">Conceptual overview</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="concepts/overview.html#signal-flow">Signal flow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/overview.html#scope">Scope</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="concepts/biology.html">Biological background</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="concepts/biology.html#retina-and-layers">Retina and layers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/biology.html#centersurround-and-receptive-fields">Center–surround and receptive fields</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/biology.html#color">Color</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="concepts/biology.html#cell-type-proportions-and-convergence-ratios">Cell Type Proportions and Convergence Ratios</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="concepts/biology.html#physical-scale-and-large-field-simulation">Physical scale and large-field simulation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/biology.html#references">References</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="concepts/equations.html">Model equations</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#notation">Notation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#stimulus-and-cone-responses">1. Stimulus and cone responses</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="concepts/equations.html#pixel-image-stimuli">Pixel-image stimuli</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#horizontal-cell-pooling">2. Horizontal cell pooling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#cone-effective-output-centersurround">3. Cone effective output (center–surround)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#bipolar-cells-on-off-split">4. Bipolar cells (ON/OFF split)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#amacrine-lateral-inhibition">5. Amacrine lateral inhibition</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#rgc-generators-dendritic-integration">6. RGC generators (dendritic integration)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#firing-rate-ln-model">7. Firing rate (LN model)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#color-opponent-signals">8. Color opponent signals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#temporal-smoothing-rc-filter">9. Temporal smoothing (RC filter)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#parameters-reference">Parameters (reference)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Deploy</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="user_guide/deploy_github_pages.html">Documentation site</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="#">RGC Circuit Simulator</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="#" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">RGC Circuit Simulator</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/index.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="rgc-circuit-simulator">
+<h1>RGC Circuit Simulator<a class="headerlink" href="#rgc-circuit-simulator" title="Link to this heading"></a></h1>
+<p>A retinal ganglion cell (RGC) circuit simulator: <strong>stimulus → cones → horizontals → bipolars → amacrines → RGCs</strong>. Vectorized NumPy/SciPy pipeline, ModernGL 3D rendering, and Dear PyGui.</p>
+<p><strong>Start here:</strong> the <a class="reference internal" href="user_guide/quickstart.html"><span class="doc">user guide</span></a> and <a class="reference internal" href="user_guide/interface.html"><span class="doc">User interface</span></a> explain how to run the app and what each control does. The <strong>concepts</strong> sections below cover biology, signal flow, and equations—the same ideas the UI exposes as sliders, weights, and layer views.</p>
+<div class="toctree-wrapper compound">
+<p class="caption" role="heading"><span class="caption-text">User guide</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="user_guide/quickstart.html">Quick start</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/quickstart.html#installation">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/quickstart.html#running-the-simulator">Running the simulator</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="user_guide/interface.html">User interface</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#theory-cross-references">Theory cross-references</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#layout">Layout</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#view-mode">View mode</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#d-heatmap-mode">2D Heatmap mode</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#image-stimuli">Image stimuli</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#d-stack-signal-flow-column-mode">3D Stack (Signal Flow Column) mode</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#circuit-tuning-left-panel-bottom">Circuit tuning (left panel, bottom)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#rgc-population-tab">RGC Population tab</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#stats-and-export">Stats and export</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="user_guide/examples.html">Examples and plots</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#heatmaps-same-code-as-the-app">Heatmaps (same code as the app)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#ln-firing-nonlinearity-cell-parameters">LN firing nonlinearity (cell parameters)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#cone-fundamentals-image-bases-and-monochromatic-sweep">Cone fundamentals, image bases, and monochromatic sweep</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#connectivity-weight-sensitivity-reduced-1d-chain">Connectivity weight sensitivity (reduced 1D chain)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#regenerating-the-figures">Regenerating the figures</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#suggested-workflows">Suggested workflows</a></li>
+</ul>
+</li>
+</ul>
+</div>
+<div class="toctree-wrapper compound">
+<p class="caption" role="heading"><span class="caption-text">Concepts (theory &amp; equations)</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="concepts/overview.html">Conceptual overview</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="concepts/overview.html#signal-flow">Signal flow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/overview.html#scope">Scope</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="concepts/biology.html">Biological background</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="concepts/biology.html#retina-and-layers">Retina and layers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/biology.html#centersurround-and-receptive-fields">Center–surround and receptive fields</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/biology.html#color">Color</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="concepts/biology.html#cell-type-proportions-and-convergence-ratios">Cell Type Proportions and Convergence Ratios</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="concepts/biology.html#physical-scale-and-large-field-simulation">Physical scale and large-field simulation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/biology.html#references">References</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="concepts/equations.html">Model equations</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#notation">Notation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#stimulus-and-cone-responses">1. Stimulus and cone responses</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#horizontal-cell-pooling">2. Horizontal cell pooling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#cone-effective-output-centersurround">3. Cone effective output (center–surround)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#bipolar-cells-on-off-split">4. Bipolar cells (ON/OFF split)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#amacrine-lateral-inhibition">5. Amacrine lateral inhibition</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#rgc-generators-dendritic-integration">6. RGC generators (dendritic integration)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#firing-rate-ln-model">7. Firing rate (LN model)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#color-opponent-signals">8. Color opponent signals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#temporal-smoothing-rc-filter">9. Temporal smoothing (RC filter)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts/equations.html#parameters-reference">Parameters (reference)</a></li>
+</ul>
+</li>
+</ul>
+</div>
+<div class="toctree-wrapper compound">
+<p class="caption" role="heading"><span class="caption-text">Deploy</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="user_guide/deploy_github_pages.html">Documentation site</a></li>
+</ul>
+</div>
+</section>
+<section id="indices-and-tables">
+<h1>Indices and tables<a class="headerlink" href="#indices-and-tables" title="Link to this heading"></a></h1>
+<ul class="simple">
+<li><p><a class="reference internal" href="genindex.html"><span class="std std-ref">Index</span></a></p></li>
+<li><p><a class="reference internal" href="py-modindex.html"><span class="std std-ref">Module Index</span></a></p></li>
+<li><p><a class="reference internal" href="search.html"><span class="std std-ref">Search Page</span></a></p></li>
+</ul>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="user_guide/quickstart.html" class="btn btn-neutral float-right" title="Quick start" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright RGC Circuit Simulator contributors.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

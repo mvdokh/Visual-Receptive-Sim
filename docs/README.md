@@ -16,6 +16,15 @@ sphinx-build -b html . _build/html
 
 Then open `_build/html/index.html` in a browser.
 
+## Example figures (optional)
+
+The **Examples** page (and figures embedded in `concepts/equations.rst`) use PNGs under `docs/_static/examples/`, e.g. `cone_fundamentals_and_basis.png`, `connectivity_weight_sensitivity.png`, `heatmap_colormaps.png`, `ln_sigmoid_family.png`. Regenerate them after changing `src/rendering/heatmap.py` or `scripts/generate_doc_example_plots.py`:
+
+```bash
+pip install numpy matplotlib   # SciPy not required; script uses NumPy convolutions
+python scripts/generate_doc_example_plots.py
+```
+
 If you have a virtualenv:
 
 ```bash

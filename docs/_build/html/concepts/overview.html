@@ -1,0 +1,212 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Conceptual overview &mdash; RGC Circuit Simulator</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
+      <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=a2671c25" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=2709fde1"></script>
+      <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+      <script>window.MathJax = {"tex": {"inlineMath": [["\\(", "\\)"]], "displayMath": [["\\[", "\\]"]]}}</script>
+      <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Biological background" href="biology.html" />
+    <link rel="prev" title="Examples and plots" href="../user_guide/examples.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            RGC Circuit Simulator
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">User guide</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../user_guide/quickstart.html">Quick start</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/quickstart.html#installation">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/quickstart.html#running-the-simulator">Running the simulator</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../user_guide/interface.html">User interface</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#theory-cross-references">Theory cross-references</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#layout">Layout</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#view-mode">View mode</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#d-heatmap-mode">2D Heatmap mode</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#image-stimuli">Image stimuli</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#d-stack-signal-flow-column-mode">3D Stack (Signal Flow Column) mode</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#circuit-tuning-left-panel-bottom">Circuit tuning (left panel, bottom)</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../user_guide/interface.html#synaptic-weights">Synaptic weights</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../user_guide/interface.html#cell-parameters">Cell parameters</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#rgc-population-tab">RGC Population tab</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#stats-and-export">Stats and export</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../user_guide/examples.html">Examples and plots</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#heatmaps-same-code-as-the-app">Heatmaps (same code as the app)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#ln-firing-nonlinearity-cell-parameters">LN firing nonlinearity (cell parameters)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#synaptic-weight-sliders">Synaptic weight sliders</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#stimulus-spectrum-coloring">Stimulus spectrum coloring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#regenerating-the-figures">Regenerating the figures</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#suggested-workflows">Suggested workflows</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Concepts (theory &amp; equations)</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Conceptual overview</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#signal-flow">Signal flow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#scope">Scope</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="biology.html">Biological background</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="biology.html#retina-and-layers">Retina and layers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="biology.html#centersurround-and-receptive-fields">Center–surround and receptive fields</a></li>
+<li class="toctree-l2"><a class="reference internal" href="biology.html#color">Color</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="biology.html#cell-type-proportions-and-convergence-ratios">Cell Type Proportions and Convergence Ratios</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="biology.html#physical-scale-and-large-field-simulation">Physical scale and large-field simulation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="biology.html#references">References</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="equations.html">Model equations</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#notation">Notation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#stimulus-and-cone-responses">1. Stimulus and cone responses</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="equations.html#pixel-image-stimuli">Pixel-image stimuli</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#horizontal-cell-pooling">2. Horizontal cell pooling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#cone-effective-output-centersurround">3. Cone effective output (center–surround)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#bipolar-cells-on-off-split">4. Bipolar cells (ON/OFF split)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#amacrine-lateral-inhibition">5. Amacrine lateral inhibition</a></li>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#rgc-generators-dendritic-integration">6. RGC generators (dendritic integration)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#firing-rate-ln-model">7. Firing rate (LN model)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#color-opponent-signals">8. Color opponent signals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#temporal-smoothing-rc-filter">9. Temporal smoothing (RC filter)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="equations.html#parameters-reference">Parameters (reference)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Deploy</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../user_guide/deploy_github_pages.html">Documentation site</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">RGC Circuit Simulator</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Conceptual overview</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/concepts/overview.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="conceptual-overview">
+<h1>Conceptual overview<a class="headerlink" href="#conceptual-overview" title="Link to this heading"></a></h1>
+<p>This page describes the <strong>model and concepts</strong> behind the RGC Circuit Simulator, without reference to the graphical interface.</p>
+<section id="signal-flow">
+<h2>Signal flow<a class="headerlink" href="#signal-flow" title="Link to this heading"></a></h2>
+<p>The simulator implements a feedforward (with one feedback) cascade from light to firing rates:</p>
+<ol class="arabic simple">
+<li><p><strong>Stimulus</strong> — A spectral radiance grid <span class="math notranslate nohighlight">\(S(x, y, \lambda)\)</span> over a retinal patch (e.g. 1° × 1°), sampled in wavelength (e.g. 380–700 nm).</p></li>
+<li><p><strong>Cones</strong> — L, M, S photoreceptor responses via spectral sensitivity (e.g. Stockman &amp; Sharpe 2000 fundamentals), giving <span class="math notranslate nohighlight">\(C_L, C_M, C_S\)</span> at each location.</p></li>
+<li><p><strong>Horizontal cells</strong> — Spatially pooled cone signals (L+M and S pathways) with Gaussian kernels; output <span class="math notranslate nohighlight">\(H\)</span> provides <strong>surround feedback</strong> to cones.</p></li>
+<li><p><strong>Cone effective output</strong> — Cone signal minus horizontal feedback (center–surround), yielding <span class="math notranslate nohighlight">\(C^{\mathrm{eff}}_L, C^{\mathrm{eff}}_M, C^{\mathrm{eff}}_S\)</span>.</p></li>
+<li><p><strong>Bipolar cells</strong> — ON/OFF split (rectification of <span class="math notranslate nohighlight">\(C^{\mathrm{eff}}\)</span>) and optional diffuse pooling; midget (small receptive field) and parasol (wider) pathways.</p></li>
+<li><p><strong>Amacrine cells</strong> — AII and wide-field amacrines pool bipolar (and cone) activity; output provides <strong>lateral inhibition</strong> subtracted from bipolar drive.</p></li>
+<li><p><strong>RGC generators</strong> — Dendritic integration modeled as Gaussian pooling of (bipolar − amacrine) with pathway-specific <span class="math notranslate nohighlight">\(\sigma\)</span>.</p></li>
+<li><p><strong>Firing rate</strong> — Linear–nonlinear (LN) model: sigmoid nonlinearity maps generator signal to spike rate (sp/s).</p></li>
+<li><p><strong>Color opponent</strong> — L−M and S−(L+M) signals for display/analysis.</p></li>
+<li><p><strong>Temporal dynamics</strong> — First-order RC smoothing per layer (exponential filter with layer-specific <span class="math notranslate nohighlight">\(\tau\)</span>).</p></li>
+</ol>
+<p>All spatial operations are implemented as 2D convolutions (Gaussian kernels) on a regular grid; the pipeline is vectorized over the grid (no per-cell loops).</p>
+</section>
+<section id="scope">
+<h2>Scope<a class="headerlink" href="#scope" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p><strong>Spatial</strong>: Single patch of retina (e.g. 256×256 grid in 1°); periodic or reflected boundary conditions.</p></li>
+<li><p><strong>Spectral</strong>: Monochromatic or multi-wavelength stimuli via cone fundamentals; no explicit opponent wiring before RGCs beyond L−M at the output.</p></li>
+<li><p><strong>Temporal</strong>: Discrete time steps; RC smoothing approximates low-pass filtering at each layer.</p></li>
+</ul>
+<p>For full mathematical detail, see <a class="reference internal" href="equations.html"><span class="doc">Model equations</span></a>; for biological context, see <a class="reference internal" href="biology.html"><span class="doc">Biological background</span></a>.</p>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<p><strong>Application</strong> — <a class="reference internal" href="../user_guide/interface.html"><span class="doc">User interface</span></a> maps panels and controls to these stages; <a class="reference internal" href="../user_guide/examples.html"><span class="doc">Examples and plots</span></a> shows heatmap and LN plots using the same rendering code as the 2D viewer.</p>
+</div>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="../user_guide/examples.html" class="btn btn-neutral float-left" title="Examples and plots" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="biology.html" class="btn btn-neutral float-right" title="Biological background" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright RGC Circuit Simulator contributors.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

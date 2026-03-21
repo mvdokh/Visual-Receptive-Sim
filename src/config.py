@@ -12,7 +12,7 @@ both the 2D and 3D viewers for consistent biological accuracy.
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 
@@ -163,6 +163,42 @@ class Viewer3DConfig:
     scale_bar_um: float = 100.0  # XY scale bar length
 
 
+def _default_rgc_type_fractions() -> Dict[str, float]:
+    from src.simulation.rgc_population import default_type_fractions
+
+    return default_type_fractions()
+
+
+def _default_rgc_group_scales() -> Dict[str, float]:
+    from src.simulation.rgc_type_constants import FUNCTIONAL_GROUPS
+
+    return {k: 1.0 for k in FUNCTIONAL_GROUPS}
+
+
+def _default_rgc_type_weight_multipliers() -> Dict[str, float]:
+    from src.simulation.rgc_type_constants import RGC_TYPES
+
+    return {k: 1.0 for k in RGC_TYPES}
+
+
+@dataclass
+class RGCPopulationConfig:
+    """42-type RGC population composition; disabled = legacy circuit behavior."""
+
+    enabled: bool = False
+    type_fractions: Dict[str, float] = field(default_factory=_default_rgc_type_fractions)
+    group_scales: Dict[str, float] = field(default_factory=_default_rgc_group_scales)
+    type_weight_multipliers: Dict[str, float] = field(
+        default_factory=_default_rgc_type_weight_multipliers
+    )
+    region: str = "parafovea"  # fovea | parafovea | periphery
+    total_rgc_density: float = 8000.0  # cells/mm² (paper-aligned presets in UI)
+    t5_cluster_bias: bool = False
+    dorsal_retina_mode: bool = False
+    ventral_retina_mode: bool = False
+    last_effective_rf_summary: Optional[Dict[str, Any]] = None
+
+
 @dataclass
 class ConnectivityWeights:
     """Editable weights for 3D connectivity display and pipeline scaling."""
@@ -190,6 +226,7 @@ class GlobalConfig:
     dendritic: DendriticFieldParams = field(default_factory=DendriticFieldParams)
     spectral: SpectralConfig = field(default_factory=SpectralConfig)
     viewer_3d: Viewer3DConfig = field(default_factory=Viewer3DConfig)
+    rgc_population: RGCPopulationConfig = field(default_factory=RGCPopulationConfig)
 
 
 def default_config() -> GlobalConfig:

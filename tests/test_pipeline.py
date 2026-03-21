@@ -49,6 +49,52 @@ def test_tick_connectivity_weights_scale_response(state):
     assert float(np.mean(state.fr_midget_on_L)) == pytest.approx(60.0, abs=2.0)
 
 
+def test_cone_to_horizontal_scales_horizontal_activation(state):
+    """cone_to_horizontal multiplies cone drive into the horizontal pool; 0 suppresses h_activation."""
+    state.ensure_initialized()
+    state.stimulus_params = {"type": "full_field", "intensity": 0.8}
+    state.config.connectivity_weights.cone_to_horizontal = 0.0
+    tick(state, 0.05)
+    h_zero = float(np.mean(state.h_activation))
+    state.config.connectivity_weights.cone_to_horizontal = 1.5
+    tick(state, 0.05)
+    h_scaled = float(np.mean(state.h_activation))
+    assert h_zero < 1e-3
+    assert h_scaled > h_zero
+
+
+def test_rgc_nl_r_max_affects_firing_ceiling(state):
+    """Cell NL r_max is applied in the pipeline; lowering it reduces mean RGC firing under drive."""
+    state.ensure_initialized()
+    state.stimulus_params = {"type": "full_field", "intensity": 0.9}
+    state.config.rgc_nl.r_max = 120.0
+    for _ in range(40):
+        tick(state, 0.05)
+    hi = float(np.mean(state.fr_midget_on_L))
+    state.config.rgc_nl.r_max = 40.0
+    for _ in range(40):
+        tick(state, 0.05)
+    lo = float(np.mean(state.fr_midget_on_L))
+    assert hi > lo + 5.0
+
+
+def test_rgc_population_enabled_skew_changes_horizontal_activation(state):
+    """Uniform group scales normalize away; skewing one group changes modulation and h_activation."""
+    state.ensure_initialized()
+    state.stimulus_params = {"type": "full_field", "intensity": 0.6}
+    rpc = state.config.rgc_population
+    rpc.enabled = False
+    tick(state, 0.05)
+    h_disabled = float(np.mean(state.h_activation))
+    rpc.enabled = True
+    for g in rpc.group_scales:
+        rpc.group_scales[g] = 1.0
+    rpc.group_scales["OFF_sustained"] = 5.0
+    tick(state, 0.05)
+    h_skew = float(np.mean(state.h_activation))
+    assert h_disabled != h_skew
+
+
 def test_tick_smoothed_layers_updated(state):
     """After tick, state attributes for SMOOTHED_LAYERS match state.smoothed (pipeline overwrites with smoothed)."""
     state.ensure_initialized()

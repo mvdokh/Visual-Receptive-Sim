@@ -142,6 +142,15 @@ class ConnectivityLines:
                     bright = act_b * act_r * get_weight("bipolar_to_rgc")
                     if bright >= 0.05:
                         col = (1.0, 0.27, 0.27)
+                        cfg = getattr(state, "config", None)
+                        rpc = getattr(cfg, "rgc_population", None) if cfg is not None else None
+                        if rpc is not None and getattr(rpc, "enabled", False):
+                            try:
+                                from src.simulation.rgc_population import line_color_for_rgc_population
+
+                                col = line_color_for_rgc_population(rpc)
+                            except Exception:
+                                pass
                         verts.extend([x, y_bp, z, col[0], col[1], col[2], min(1.0, bright)])
                         verts.extend([x, y_rgc, z, col[0], col[1], col[2], min(1.0, bright)])
         if not verts:

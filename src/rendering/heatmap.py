@@ -110,58 +110,76 @@ def _normalize(grid: np.ndarray) -> np.ndarray:
     return (g - g_min) / (g_max - g_min)
 
 
+def _intensity_to_firing01(g: np.ndarray) -> np.ndarray:
+    """
+    Same intensity scale as the \"firing\" (amber) heatmap: n = g / max(g) when
+    max > 0, else min-max normalize, plus the uniform-nonzero fallback.
+
+    All colormaps use this n so spectral / diverging / biphasic show the same
+    underlying activity as amber; only the RGB mapping differs.
+    """
+    g = np.asarray(g, dtype=np.float32)
+    if float(np.max(g)) > 0.0:
+        n = g / float(np.max(g))
+    else:
+        n = _normalize(g)
+    if not n.any() and float(np.mean(g)) > 0.0:
+        n = np.full_like(g, 0.7, dtype=np.float32)
+    return n.astype(np.float32)
+
+
+def _signed_from_intensity01(n: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Map n in [0, 1] (amber intensity) to symmetric signed [-1, 1] for diverging/biphasic hues.
+    """
+    n_clip = np.clip(n, 0.0, 1.0)
+    g_signed = 2.0 * n_clip - 1.0
+    neg = np.clip(-g_signed, 0.0, None)
+    pos = np.clip(g_signed, 0.0, None)
+    return neg, pos
+
+
 def grid_to_rgba(
     grid: np.ndarray,
     colormap: ColormapName = "firing",
     biphasic_center: float = 0.0,
 ) -> np.ndarray:
     """
-    Map a 2D activation grid (H, W) to an RGBA array (H, W, 4), float32 0–1.
+    Map a 2D activation grid (H, W) to an RGBA array (H, W, 4), float32 0-1.
+
+    Every colormap uses the same intensity normalization as \"firing\" (g to n);
+    only the color mapping from n differs.
     """
     g = grid.astype(np.float32)
     h, w = g.shape
     rgba = np.zeros((h, w, 4), dtype=np.float32)
 
+    # Single intensity pipeline: match amber (optionally offset for biphasic center)
     if colormap == "biphasic":
-        # Blue (-) → black (0) → red (+)
-        neg = np.clip(-(g - biphasic_center), 0.0, None)
-        pos = np.clip((g - biphasic_center), 0.0, None)
-        neg = _normalize(neg)
-        pos = _normalize(pos)
-        if not (neg.any() or pos.any()) and float(np.mean(np.abs(g))) > 0.0:
-            # Uniform non-zero field: show as mild activation.
-            pos[...] = 0.7
-        rgba[..., 0] = pos  # R
-        rgba[..., 2] = neg  # B
-        rgba[..., 3] = np.maximum(neg, pos)
-    elif colormap == "firing":
-        # Black → amber → white
-        # For firing, treat uniform non-zero fields as visible.
-        if float(np.max(g)) > 0.0:
-            n = g / float(np.max(g))
-        else:
-            n = _normalize(g)
-        if not n.any() and float(np.mean(g)) > 0.0:
-            n[...] = 0.7
+        n = _intensity_to_firing01(g - float(biphasic_center))
+    else:
+        n = _intensity_to_firing01(g)
+
+    if colormap == "firing":
         rgba[..., 0] = np.minimum(1.0, n * 2.0)  # R
         rgba[..., 1] = np.minimum(1.0, n * 1.2)  # G
         rgba[..., 2] = np.minimum(1.0, n * 0.5)  # B
         rgba[..., 3] = n
     elif colormap == "spectral":
-        # Simple violet→red gradient over [0,1]
-        n = _normalize(g)
-        rgba[..., 0] = n  # R
-        rgba[..., 1] = np.sin(n * np.pi)  # G-ish band
-        rgba[..., 2] = 1.0 - n  # B
-        rgba[..., 3] = np.clip(n * 1.2, 0.0, 1.0)
+        nc = np.clip(n, 0.0, 1.0)
+        rgba[..., 0] = nc
+        rgba[..., 1] = np.sin(nc * np.pi)
+        rgba[..., 2] = 1.0 - nc
+        rgba[..., 3] = np.clip(nc * 1.2, 0.0, 1.0)
     elif colormap == "diverging":
-        # Green (-) → white (0) → magenta (+)
-        neg = np.clip(-g, 0.0, None)
-        pos = np.clip(g, 0.0, None)
-        neg = _normalize(neg)
-        pos = _normalize(pos)
+        neg, pos = _signed_from_intensity01(n)
         rgba[..., 0] = pos
         rgba[..., 1] = np.maximum(neg, pos)
+        rgba[..., 2] = neg
+        rgba[..., 3] = np.maximum(neg, pos)
+    elif colormap == "biphasic":
+        neg, pos = _signed_from_intensity01(n)
+        rgba[..., 0] = pos
         rgba[..., 2] = neg
         rgba[..., 3] = np.maximum(neg, pos)
     else:
@@ -201,4 +219,3 @@ def draw_scale_bar_rgba(
     rgba[y0:y1, x0:x1, :] = color
     # Label (simple white bar; text would require font rendering)
     return rgba
-

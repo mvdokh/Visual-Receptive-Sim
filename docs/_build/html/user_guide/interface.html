@@ -1,0 +1,302 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>User interface &mdash; RGC Circuit Simulator</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
+      <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=a2671c25" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=2709fde1"></script>
+      <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+      <script>window.MathJax = {"tex": {"inlineMath": [["\\(", "\\)"]], "displayMath": [["\\[", "\\]"]]}}</script>
+      <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Examples and plots" href="examples.html" />
+    <link rel="prev" title="Quick start" href="quickstart.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            RGC Circuit Simulator
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">User guide</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="quickstart.html">Quick start</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="quickstart.html#installation">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="quickstart.html#running-the-simulator">Running the simulator</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">User interface</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#theory-cross-references">Theory cross-references</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#layout">Layout</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#view-mode">View mode</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#d-heatmap-mode">2D Heatmap mode</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#image-stimuli">Image stimuli</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#d-stack-signal-flow-column-mode">3D Stack (Signal Flow Column) mode</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#circuit-tuning-left-panel-bottom">Circuit tuning (left panel, bottom)</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#synaptic-weights">Synaptic weights</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#cell-parameters">Cell parameters</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#rgc-population-tab">RGC Population tab</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#stats-and-export">Stats and export</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="examples.html">Examples and plots</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="examples.html#heatmaps-same-code-as-the-app">Heatmaps (same code as the app)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="examples.html#ln-firing-nonlinearity-cell-parameters">LN firing nonlinearity (cell parameters)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="examples.html#synaptic-weight-sliders">Synaptic weight sliders</a></li>
+<li class="toctree-l2"><a class="reference internal" href="examples.html#stimulus-spectrum-coloring">Stimulus spectrum coloring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="examples.html#regenerating-the-figures">Regenerating the figures</a></li>
+<li class="toctree-l2"><a class="reference internal" href="examples.html#suggested-workflows">Suggested workflows</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Concepts (theory &amp; equations)</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../concepts/overview.html">Conceptual overview</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../concepts/overview.html#signal-flow">Signal flow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts/overview.html#scope">Scope</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../concepts/biology.html">Biological background</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../concepts/biology.html#retina-and-layers">Retina and layers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts/biology.html#centersurround-and-receptive-fields">Center–surround and receptive fields</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts/biology.html#color">Color</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../concepts/biology.html#cell-type-proportions-and-convergence-ratios">Cell Type Proportions and Convergence Ratios</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../concepts/biology.html#physical-scale-and-large-field-simulation">Physical scale and large-field simulation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts/biology.html#references">References</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../concepts/equations.html">Model equations</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../concepts/equations.html#notation">Notation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts/equations.html#stimulus-and-cone-responses">1. Stimulus and cone responses</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../concepts/equations.html#pixel-image-stimuli">Pixel-image stimuli</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts/equations.html#horizontal-cell-pooling">2. Horizontal cell pooling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts/equations.html#cone-effective-output-centersurround">3. Cone effective output (center–surround)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts/equations.html#bipolar-cells-on-off-split">4. Bipolar cells (ON/OFF split)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts/equations.html#amacrine-lateral-inhibition">5. Amacrine lateral inhibition</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts/equations.html#rgc-generators-dendritic-integration">6. RGC generators (dendritic integration)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts/equations.html#firing-rate-ln-model">7. Firing rate (LN model)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts/equations.html#color-opponent-signals">8. Color opponent signals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts/equations.html#temporal-smoothing-rc-filter">9. Temporal smoothing (RC filter)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts/equations.html#parameters-reference">Parameters (reference)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Deploy</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="deploy_github_pages.html">Documentation site</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">RGC Circuit Simulator</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">User interface</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/user_guide/interface.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="user-interface">
+<h1>User interface<a class="headerlink" href="#user-interface" title="Link to this heading"></a></h1>
+<p>This page describes the <strong>graphical interface</strong>: panels, views, and how they connect to the model. For math and biology, use the concepts pages (linked below). For runnable plots that mirror the heatmap and LN code, see <a class="reference internal" href="examples.html"><span class="doc">Examples and plots</span></a>.</p>
+<section id="theory-cross-references">
+<h2>Theory cross-references<a class="headerlink" href="#theory-cross-references" title="Link to this heading"></a></h2>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 38.0%" />
+<col style="width: 62.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Topic</p></th>
+<th class="head"><p>Where to read more</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Signal flow (stimulus → RGC)</p></td>
+<td><p><a class="reference internal" href="../concepts/overview.html"><span class="doc">Conceptual overview</span></a></p></td>
+</tr>
+<tr class="row-odd"><td><p>Cell types, center–surround, convergence</p></td>
+<td><p><a class="reference internal" href="../concepts/biology.html"><span class="doc">Biological background</span></a></p></td>
+</tr>
+<tr class="row-even"><td><p>Equations, symbols, parameter list</p></td>
+<td><p><a class="reference internal" href="../concepts/equations.html"><span class="doc">Model equations</span></a> (<a class="reference internal" href="../concepts/equations.html#parameters"><span class="std std-ref">Parameters (reference)</span></a>)</p></td>
+</tr>
+<tr class="row-odd"><td><p>Plots of colormaps, LN curve, weights (same code paths as the app)</p></td>
+<td><p><a class="reference internal" href="examples.html"><span class="doc">Examples and plots</span></a></p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="layout">
+<h2>Layout<a class="headerlink" href="#layout" title="Link to this heading"></a></h2>
+<p>The window has three main areas:</p>
+<ul class="simple">
+<li><p><strong>Left panel</strong> — View mode, 2D layer selector (when applicable), stimulus controls, 3D camera and connectivity toggles when <strong>3D Stack</strong> is selected, viewport pick layer, and a bordered <strong>Circuit tuning</strong> block at the bottom (<strong>synaptic weights</strong> and <strong>cell parameters</strong>).</p></li>
+<li><p><strong>Center</strong> — The main viewport: 2D heatmap, 2D all-layers mosaic, or the 3D Signal Flow Column (Vispy).</p></li>
+<li><p><strong>Right panel (tabs)</strong> — <strong>Stats</strong> (summary statistics, RGC sparkline and histogram, <strong>Export data</strong> buttons), <strong>Inspector</strong> (only when <strong>3D Stack</strong> is active; shows connectivity for the picked cell), <strong>RGC Population</strong> (42-type composition and optional modulation).</p></li>
+</ul>
+</section>
+<section id="view-mode">
+<h2>View mode<a class="headerlink" href="#view-mode" title="Link to this heading"></a></h2>
+<p>Use <strong>View → Mode</strong> (left panel, <strong>Mode</strong> combo) to switch:</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 28.0%" />
+<col style="width: 72.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Mode</p></th>
+<th class="head"><p>Purpose</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>2D Heatmap</strong></p></td>
+<td><p>Single layer, full viewport; use <strong>Layer</strong> to choose which array is shown (<a class="reference internal" href="../concepts/overview.html"><span class="doc">Conceptual overview</span></a>, layers list).</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>2D All Layers</strong></p></td>
+<td><p>Tiled overview of major stages; good for comparing cone vs bipolar vs RGC at a glance.</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>3D Stack</strong></p></td>
+<td><p>Signal-flow column, connectivity lines, per-slab traces; <strong>Inspector</strong> tab becomes available; pick layer applies to viewport clicks.</p></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Stats</strong> and export always refer to the running simulation state (same pipeline as in <a class="reference internal" href="../concepts/equations.html"><span class="doc">Model equations</span></a>), regardless of view mode.</p>
+</section>
+<section id="d-heatmap-mode">
+<h2>2D Heatmap mode<a class="headerlink" href="#d-heatmap-mode" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p><strong>Layer</strong> combo selects which layer to display (Stimulus, Cones L/M/S, Horizontal, Bipolar ON, Amacrine, RGC Firing (L), etc.).</p></li>
+<li><p><strong>Heatmap colormap</strong> selects how scalar grids are painted: Firing (amber), Biphasic, Spectral, Diverging—see <a class="reference internal" href="examples.html"><span class="doc">Examples and plots</span></a> for side-by-side plots using <code class="docutils literal notranslate"><span class="pre">grid_to_rgba</span></code>.</p></li>
+<li><p>The heatmap uses a firing colormap (black → amber → white) for activation layers; <strong>Stimulus</strong> uses a spectral-derived RGB from the current stimulus spectrum (cone fundamentals in <a class="reference internal" href="../concepts/biology.html"><span class="doc">Biological background</span></a>).</p></li>
+</ul>
+</section>
+<section id="image-stimuli">
+<h2>Image stimuli<a class="headerlink" href="#image-stimuli" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p>Selecting <strong>Stimulus type = image</strong> enables <strong>Load image stimulus…</strong>.</p></li>
+<li><p>The image is resized to the retinal grid and converted to a per-pixel spectrum before cone integration—see <strong>Pixel-image stimuli</strong> in <a class="reference internal" href="../concepts/equations.html"><span class="doc">Model equations</span></a>.</p></li>
+<li><p><strong>Intensity</strong> scales the spectrum globally (brighter image → stronger cone drive).</p></li>
+</ul>
+</section>
+<section id="d-stack-signal-flow-column-mode">
+<h2>3D Stack (Signal Flow Column) mode<a class="headerlink" href="#d-stack-signal-flow-column-mode" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p><strong>Show signal flow</strong> — Toggles connection lines (cone to horizontal, cone to bipolar, bipolar to amacrine, bipolar to RGC). Matches pathway descriptions in <a class="reference internal" href="../concepts/overview.html"><span class="doc">Conceptual overview</span></a>.</p></li>
+<li><p><strong>Slice position</strong> — Moves the slice used for per-layer oscilloscope traces beside each slab.</p></li>
+<li><p><strong>Camera</strong> — Azimuth, elevation, distance; drag to orbit, scroll to zoom. <strong>View</strong> menu: Top / Front / Isometric.</p></li>
+<li><p><strong>Layer visibility</strong> — Per-slab on/off and opacity (Stimulus through RGC).</p></li>
+<li><p><strong>Per-layer trace strips</strong> — Space–time heatmap and line trace for each slab.</p></li>
+</ul>
+<p><strong>Inspector</strong> tab (right) appears only in this mode: click the viewport to pick a cell; details depend on <strong>Inspection layer (coarse layer)</strong> on the left. Connectivity math follows the same weights as <strong>Circuit tuning</strong> and <a class="reference internal" href="../concepts/equations.html#parameters"><span class="std std-ref">Parameters (reference)</span></a>.</p>
+</section>
+<section id="circuit-tuning-left-panel-bottom">
+<h2>Circuit tuning (left panel, bottom)<a class="headerlink" href="#circuit-tuning-left-panel-bottom" title="Link to this heading"></a></h2>
+<section id="synaptic-weights">
+<h3>Synaptic weights<a class="headerlink" href="#synaptic-weights" title="Link to this heading"></a></h3>
+<p>Editable weights: Cone to Horizontal, Cone to Bipolar, Horizontal to Cone, Bipolar to Amacrine, Amacrine to Bipolar, Bipolar to RGC (range 0.0–3.0). They scale terms in the pipeline (see weight symbols in <a class="reference internal" href="../concepts/equations.html"><span class="doc">Model equations</span></a>, sections 2–7).</p>
+<ul class="simple">
+<li><p><strong>Reset weights to 1.0</strong> — Restores defaults.</p></li>
+<li><p><strong>Randomize weights</strong> — Uniform random in [0.5, 2.0] for exploration.</p></li>
+</ul>
+</section>
+<section id="cell-parameters">
+<h3>Cell parameters<a class="headerlink" href="#cell-parameters" title="Link to this heading"></a></h3>
+<p>Tree nodes group <strong>midget RGC</strong>, <strong>parasol</strong>, <strong>horizontal</strong>, <strong>amacrine</strong>, and <strong>temporal</strong> settings. These map to <span class="math notranslate nohighlight">\(\sigma\)</span> scales, LN parameters (<span class="math notranslate nohighlight">\(r_{\max}\)</span>, slope, half-point), and <span class="math notranslate nohighlight">\(\tau\)</span> values in <a class="reference internal" href="../concepts/equations.html"><span class="doc">Model equations</span></a>. The <strong>LN</strong> family plots in <a class="reference internal" href="examples.html"><span class="doc">Examples and plots</span></a> show how <strong>r_max</strong> and <strong>slope</strong> change the output nonlinearity.</p>
+</section>
+</section>
+<section id="rgc-population-tab">
+<h2>RGC Population tab<a class="headerlink" href="#rgc-population-tab" title="Link to this heading"></a></h2>
+<p>Optional <strong>population modulation</strong> skews effective time constants and gains from a 42-type composition model (<a class="reference internal" href="../concepts/biology.html"><span class="doc">Biological background</span></a>, cell-type proportions). When <strong>Enable population modulation</strong> is on, the pipeline uses the modulated path described in the code and tests; the tab also shows validation hints and an effective-RF preview.</p>
+</section>
+<section id="stats-and-export">
+<h2>Stats and export<a class="headerlink" href="#stats-and-export" title="Link to this heading"></a></h2>
+<p>The <strong>Stats</strong> tab lists mean firing, color-opponent summaries, per-layer lines, an RGC sparkline, and a histogram. Below <strong>Export data</strong>:</p>
+<ul class="simple">
+<li><p><strong>Save screenshot (PNG)</strong> — Captures the current viewport image.</p></li>
+<li><p><strong>Save layer stats (CSV)</strong> — Tabular summary of layers.</p></li>
+<li><p><strong>Save layer grids (.npy)</strong> — NumPy archive of layer arrays.</p></li>
+</ul>
+<p>For GitHub Pages deployment of this documentation, see <a class="reference internal" href="deploy_github_pages.html"><span class="doc">Documentation site</span></a>.</p>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="quickstart.html" class="btn btn-neutral float-left" title="Quick start" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="examples.html" class="btn btn-neutral float-right" title="Examples and plots" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright RGC Circuit Simulator contributors.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

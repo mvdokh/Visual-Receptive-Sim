@@ -8,6 +8,7 @@ from src.rendering.heatmap import (
     _wavelength_to_rgb_vec,
     spectrum_to_stimulus_rgba,
     _normalize,
+    _intensity_to_firing01,
     grid_to_rgba,
 )
 
@@ -65,6 +66,28 @@ def test_normalize_range():
     assert float(np.max(n)) == pytest.approx(1.0)
 
 
+def test_intensity_to_firing01_matches_firing_alpha():
+    """_intensity_to_firing01 is the same scale as amber alpha channel."""
+    g = np.array([[0.1, 0.5], [0.2, 0.0]], dtype=np.float32)
+    n = _intensity_to_firing01(g)
+    rgba_f = grid_to_rgba(g, colormap="firing")
+    np.testing.assert_allclose(n, rgba_f[..., 3], rtol=0, atol=1e-6)
+
+
+def test_intensity_to_firing01_uniform_positive():
+    """Uniform positive g -> n all ones (same as g / max(g))."""
+    g = np.full((4, 4), 0.42, dtype=np.float32)
+    n = _intensity_to_firing01(g)
+    np.testing.assert_allclose(n, 1.0)
+
+
+def test_intensity_to_firing01_all_zero():
+    """All-zero g -> n all zero."""
+    g = np.zeros((3, 3), dtype=np.float32)
+    n = _intensity_to_firing01(g)
+    np.testing.assert_allclose(n, 0.0)
+
+
 def test_grid_to_rgba_firing():
     """Firing colormap: output (H,W,4), alpha follows intensity."""
     g = np.array([[0.0, 0.5], [1.0, 0.2]], dtype=np.float32)
@@ -85,6 +108,43 @@ def test_grid_to_rgba_spectral():
     g = np.array([[0.0, 0.5], [1.0, 0.0]], dtype=np.float32)
     rgba = grid_to_rgba(g, colormap="spectral")
     assert rgba.shape == (2, 2, 4)
+
+
+def test_spectral_uses_same_intensity_as_firing():
+    """Spectral R channel equals clipped firing intensity n (same pipeline as amber)."""
+    g = np.array([[0.1, 0.4], [0.0, 0.8]], dtype=np.float32)
+    n = _intensity_to_firing01(g)
+    nc = np.clip(n, 0.0, 1.0)
+    rgba_s = grid_to_rgba(g, colormap="spectral")
+    np.testing.assert_allclose(rgba_s[..., 0], nc, rtol=0, atol=1e-6)
+
+
+@pytest.mark.parametrize("cmap", ["spectral", "diverging", "biphasic"])
+def test_grid_to_rgba_uniform_nonzero_not_invisible(cmap: str):
+    """Uniform non-zero activity stays visible (same n pipeline as firing: g/max -> ones)."""
+    g = np.full((32, 32), 0.37, dtype=np.float32)
+    kwargs = {}
+    if cmap == "biphasic":
+        kwargs["biphasic_center"] = 0.0
+    rgba = grid_to_rgba(g, colormap=cmap, **kwargs)  # type: ignore[arg-type]
+    assert rgba.shape == (32, 32, 4)
+    assert float(np.mean(rgba[..., 3])) > 0.15
+    assert float(np.max(rgba[..., 3])) > 0.15
+
+
+def test_grid_to_rgba_spectral_uniform_zero_stays_dark():
+    """Truly silent layer (all zeros) should stay dark."""
+    g = np.zeros((16, 16), dtype=np.float32)
+    rgba = grid_to_rgba(g, colormap="spectral")
+    assert float(np.max(rgba[..., 3])) < 1e-5
+
+
+def test_grid_to_rgba_pre_normalized_uniform_like_cone_tile():
+    """Values in [0,1] spatially flat: n = g/max = 1 everywhere (same as amber)."""
+    g = np.full((64, 64), 0.25, dtype=np.float32)
+    for cmap in ("spectral", "diverging"):
+        rgba = grid_to_rgba(g, colormap=cmap)  # type: ignore[arg-type]
+        assert float(np.max(rgba[..., 3])) > 0.1, cmap
 
 
 def test_grid_to_rgba_diverging():

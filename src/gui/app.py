@@ -61,7 +61,6 @@ from src.gui.panels.data_export import (
     export_layer_grids_npy,
 )
 from src.simulation import SimState, tick
-from src.simulation.rf_probe import probe_sweep_fast, fit_dog
 from src.simulation.bio_constants import (
     RELATIVE_DENSITY,
     PHOTORECEPTOR_RGC_RATIO,
@@ -117,12 +116,11 @@ COMPOSITE_LAYER_ORDER_2D = [
 ]
 
 
-def _update_rgb_mapping_mode(label: str, state: SimState) -> None:
-    """Update spectral RGB→LMS mapping mode from GUI combo label."""
-    mode = "rgbtolms" if "rgbtolms" in label else "legacy_spectral"
-    state.stimulus_params["rgb_mapping_mode"] = mode
-    if hasattr(state.config, "spectral"):
-        setattr(state.config.spectral, "image_rgb_mapping", mode)
+def _panel_section_gap() -> None:
+    """Visual separation between major blocks (Dear PyGui has no draggable column splitters)."""
+    dpg.add_spacer(height=4)
+    dpg.add_separator()
+    dpg.add_spacer(height=4)
 
 
 def _set_convergence_note(layer_name: str) -> None:
@@ -142,12 +140,30 @@ def _set_convergence_note(layer_name: str) -> None:
     dpg.set_value("layer_convergence_note", notes.get(layer_name, ""))
 
 
-PANEL_WIDTH = 260
-# Minimum size: all three panels (left 260 + center 400 + right 260) must fit
+PANEL_WIDTH = 400
+# Minimum size: all three panels (left + center min + right) must fit
 MIN_VIEWPORT_WIDTH = 400
-MIN_WINDOW_SIZE: Tuple[int, int] = (MIN_VIEWPORT_WIDTH + 2 * PANEL_WIDTH, 640)  # 920 x 640
-# Default size on launch: large enough to see all three panels with no scrolling
-WINDOW_SIZE: Tuple[int, int] = (1280, 800)
+MIN_WINDOW_SIZE: Tuple[int, int] = (MIN_VIEWPORT_WIDTH + 2 * PANEL_WIDTH, 640)
+
+
+def _default_window_size() -> Tuple[int, int]:
+    """Primary monitor size minus margin for title bar / dock; fallback for headless."""
+    try:
+        import tkinter as tk
+
+        root = tk.Tk()
+        root.withdraw()
+        w = root.winfo_screenwidth()
+        h = root.winfo_screenheight()
+        root.destroy()
+        pad_w, pad_h = 16, 72
+        return (max(MIN_WINDOW_SIZE[0], w - pad_w), max(MIN_WINDOW_SIZE[1], h - pad_h))
+    except Exception:
+        return (1920, 1080)
+
+
+# Default size before maximize; also used as minimum target in the first frames
+WINDOW_SIZE: Tuple[int, int] = _default_window_size()
 VIEWPORT_TEX_TAG = "rgc_viewport_tex"
 VIEWPORT_AREA_TAG = "viewport_area"
 VIEWPORT_IMAGE_TAG = "viewport_image"
@@ -518,11 +534,11 @@ def _update_view_mode_ui(mode: str) -> None:
             dpg.show_item("camera_3d_node")
         else:
             dpg.hide_item("camera_3d_node")
-    if dpg.does_item_exist("pick_layer_combo"):
+    if dpg.does_item_exist("inspection_layer_section"):
         if is_3d:
-            dpg.show_item("pick_layer_combo")
+            dpg.show_item("inspection_layer_section")
         else:
-            dpg.hide_item("pick_layer_combo")
+            dpg.hide_item("inspection_layer_section")
     # Layer combo is only meaningful in single-layer 2D heatmap mode.
     if dpg.does_item_exist("layer_combo"):
         if mode == "2D Heatmap":
@@ -534,6 +550,8 @@ def _update_view_mode_ui(mode: str) -> None:
             dpg.show_item("viewer3d_toolbar")
         else:
             dpg.hide_item("viewer3d_toolbar")
+    if dpg.does_item_exist("inspector_tab"):
+        dpg.configure_item("inspector_tab", show=is_3d)
 
 
 def _reset_camera(preset: str) -> None:
@@ -593,12 +611,6 @@ def _build_left_panel(state: SimState) -> None:
         except Exception:
             scale_um = 100.0
         dpg.add_text(f"Scale bar: {scale_um:.0f} um", tag="scale_bar_text")
-        dpg.add_combo(
-            label="Pick layer (click viewport to inspect)",
-            items=["RGC", "Cone", "Bipolar", "Horizontal", "Amacrine"],
-            default_value="RGC",
-            tag="pick_layer_combo",
-        )
         dpg.add_checkbox(
             label="Biological scale (weight by convergence)",
             default_value=False,
@@ -610,30 +622,29 @@ def _build_left_panel(state: SimState) -> None:
             default_value="Firing (amber)",
             tag="heatmap_colormap_combo",
         )
-        dpg.add_spacer(height=8)
+        _panel_section_gap()
         dpg.add_text("Stimulus")
-        with dpg.tree_node(label="Stimulus", default_open=True):
-            dpg.add_combo(
-                label="Type",
-                items=[
-                    "spot",
-                    "full_field",
-                    "annulus",
-                    "bar",
-                    "grating",
-                    "checkerboard",
-                    "moving_spot",
-                    "moving_bar",
-                    "moving_grating",
-                    "expanding_ring",
-                    "drifting_grating_full",
-                    "dual_spot",
-                    "image",
-                ],
-                default_value="spot",
-                tag="stimulus_type_combo",
-                callback=lambda s, a: (_update_stimulus_visibility(a, state), state.stimulus_params.update({"type": a})),
-            )
+        dpg.add_combo(
+            label="Stimulus type",
+            items=[
+                "spot",
+                "full_field",
+                "annulus",
+                "bar",
+                "grating",
+                "checkerboard",
+                "moving_spot",
+                "moving_bar",
+                "moving_grating",
+                "expanding_ring",
+                "drifting_grating_full",
+                "dual_spot",
+                "image",
+            ],
+            default_value="spot",
+            tag="stimulus_type_combo",
+            callback=lambda s, a: (_update_stimulus_visibility(a, state), state.stimulus_params.update({"type": a})),
+        )
         dpg.add_slider_float(
             label="Wavelength (nm)",
             min_value=380,
@@ -647,13 +658,6 @@ def _build_left_panel(state: SimState) -> None:
             max_value=1.0,
             default_value=1.0,
             callback=lambda s, a: state.stimulus_params.update({"intensity": a}),
-        )
-        dpg.add_combo(
-            label="RGB to LMS mapping",
-            items=["rgbtolms (calibrated monitor)", "Legacy Gaussian basis"],
-            default_value="rgbtolms (calibrated monitor)",
-            tag="stim_rgb_mapping_combo",
-            callback=lambda s, a: _update_rgb_mapping_mode(a, state),
         )
         dpg.add_slider_float(
             label="Radius (deg)",
@@ -699,68 +703,20 @@ def _build_left_panel(state: SimState) -> None:
                 dpg.add_slider_float(label="Secondary intensity", min_value=0.0, max_value=1.0, default_value=1.0,
                     tag="stim_intensity2", callback=lambda s, a: state.stimulus_params.update({"intensity2": a}))
 
-        with dpg.tree_node(label="Circuit", default_open=False):
-            cfg = state.config
-            dpg.add_slider_float(
-                label="H alpha (LM)",
-                min_value=0.0,
-                max_value=1.5,
-                default_value=cfg.horizontal.alpha_lm,
-                callback=lambda s, a: setattr(cfg.horizontal, "alpha_lm", a),
-            )
-            dpg.add_slider_float(
-                label="Amacrine gamma_AII",
-                min_value=0.0,
-                max_value=1.5,
-                default_value=cfg.amacrine.gamma_aii,
-                callback=lambda s, a: setattr(cfg.amacrine, "gamma_aii", a),
-            )
-            dpg.add_slider_float(
-                label="Amacrine gamma_wide",
-                min_value=0.0,
-                max_value=1.5,
-                default_value=cfg.amacrine.gamma_wide,
-                callback=lambda s, a: setattr(cfg.amacrine, "gamma_wide", a),
-            )
-
-        with dpg.tree_node(label="RGC Params", default_open=False):
-            dpg.add_slider_float(
-                label="r_max",
-                min_value=10.0,
-                max_value=300.0,
-                default_value=cfg.rgc_nl.r_max,
-                callback=lambda s, a: setattr(cfg.rgc_nl, "r_max", a),
-            )
-            dpg.add_slider_float(
-                label="slope",
-                min_value=0.5,
-                max_value=10.0,
-                default_value=cfg.rgc_nl.slope,
-                callback=lambda s, a: setattr(cfg.rgc_nl, "slope", a),
-            )
-
-        with dpg.tree_node(label="Temporal", default_open=False):
-            dpg.add_slider_float(
-                label="RGC tau",
-                min_value=0.005,
-                max_value=0.2,
-                default_value=cfg.temporal.rgc_tau,
-                callback=lambda s, a: setattr(cfg.temporal, "rgc_tau", a),
-            )
-
+        _panel_section_gap()
         with dpg.tree_node(label="Camera (3D)", default_open=True, tag="camera_3d_node"):
             dpg.add_checkbox(label="Show signal flow", default_value=True, tag="show_signal_flow")
             dpg.add_slider_float(label="Slice position", min_value=-0.5, max_value=0.5, default_value=0.0,
                 tag="slice_position")
-            dpg.add_text("Connectivity types")
-            dpg.add_checkbox(label="Cone -> Horizontal", default_value=True, tag="show_cone_to_horizontal")
-            dpg.add_checkbox(label="Cone -> Bipolar", default_value=True, tag="show_cone_to_bipolar")
-            dpg.add_checkbox(label="Bipolar -> Amacrine", default_value=True, tag="show_bipolar_to_amacrine")
-            dpg.add_checkbox(label="Bipolar -> RGC", default_value=True, tag="show_bipolar_to_rgc")
+            dpg.add_text("Connectivity types (3D lines)")
+            dpg.add_checkbox(label="Cone to Horizontal", default_value=True, tag="show_cone_to_horizontal")
+            dpg.add_checkbox(label="Cone to Bipolar", default_value=True, tag="show_cone_to_bipolar")
+            dpg.add_checkbox(label="Bipolar to Amacrine", default_value=True, tag="show_bipolar_to_amacrine")
+            dpg.add_checkbox(label="Bipolar to RGC", default_value=True, tag="show_bipolar_to_rgc")
             dpg.add_combo(
                 label="Fovea / Periphery",
-                items=["Fovea (~1:1 cone→RGC)", "Periphery (up to ~30:1)"],
-                default_value="Fovea (~1:1 cone→RGC)",
+                items=["Fovea (~1:1 cone to RGC)", "Periphery (up to ~30:1)"],
+                default_value="Fovea (~1:1 cone to RGC)",
                 tag="fovea_periphery_combo",
             )
             dpg.add_slider_float(
@@ -794,6 +750,23 @@ def _build_left_panel(state: SimState) -> None:
                         dpg.add_checkbox(label=name, default_value=True, tag=f"layer_vis_{name}")
                         dpg.add_slider_float(width=80, min_value=0.0, max_value=1.0, default_value=0.85, tag=f"layer_opacity_{name}")
 
+        with dpg.group(tag="inspection_layer_section"):
+            _panel_section_gap()
+            dpg.add_text("Inspection layer (viewport click)")
+            dpg.add_combo(
+                label="Coarse layer",
+                items=["RGC", "Cone", "Bipolar", "Horizontal", "Amacrine"],
+                default_value="RGC",
+                tag="pick_layer_combo",
+            )
+        _panel_section_gap()
+        dpg.add_text("Circuit tuning")
+        _build_connectivity_weights_block(state)
+        _panel_section_gap()
+        dpg.add_text("Cell parameters")
+        _build_cell_params_block(state)
+
+
 def _set_conn_weight(state: SimState, key: str, value: float) -> None:
     if hasattr(state.config, "connectivity_weights"):
         setattr(state.config.connectivity_weights, key, max(0.0, min(3.0, value)))
@@ -821,6 +794,198 @@ def _reset_connectivity_weights(state: SimState) -> None:
     _shared["connectivity_dirty"] = True
 
 
+# Dear PyGui input_float: show 3 decimals; avoid "->" in labels (font may render as "?")
+_CONN_F = {"step": 0.001, "format": "%.3f"}
+# Format only — use with per-widget step=... (do not merge _CONN_F or step is duplicated)
+_INPUT_FLOAT_FMT = {"format": "%.3f"}
+
+
+def _build_connectivity_weights_block(state: SimState) -> None:
+    """Synaptic weight editors (also used in left panel)."""
+    dpg.add_text("Weights (0.0 to 3.0). Applied to simulation and 3D lines.")
+    cw = state.config.connectivity_weights
+    rows = [
+        ("conn_cone_to_horizontal", "Cone to Horizontal", "cone_to_horizontal"),
+        ("conn_cone_to_bipolar", "Cone to Bipolar", "cone_to_bipolar"),
+        ("conn_horizontal_to_cone", "Horizontal to Cone", "horizontal_to_cone"),
+        ("conn_bipolar_to_amacrine", "Bipolar to Amacrine", "bipolar_to_amacrine"),
+        ("conn_amacrine_to_bipolar", "Amacrine to Bipolar", "amacrine_to_bipolar"),
+        ("conn_bipolar_to_rgc", "Bipolar to RGC", "bipolar_to_rgc"),
+    ]
+    for tag, label, key in rows:
+        dpg.add_input_float(
+            label=label,
+            default_value=getattr(cw, key),
+            min_value=0.0,
+            max_value=3.0,
+            min_clamped=True,
+            max_clamped=True,
+            width=140,
+            tag=tag,
+            **_CONN_F,
+            callback=lambda s, a, k=key: (_set_conn_weight(state, k, a), _set_connectivity_dirty()),
+        )
+    dpg.add_button(
+        label="Reset weights to 1.0",
+        tag="conn_reset",
+        width=-1,
+        callback=lambda: _reset_connectivity_weights(state),
+    )
+    dpg.add_button(
+        label="Randomize weights",
+        tag="conn_randomize",
+        width=-1,
+        callback=lambda: _randomize_connectivity_weights(state),
+    )
+
+
+def _build_cell_params_block(state: SimState) -> None:
+    """Detailed cell parameters (pathway knobs; not tied to named histological types)."""
+    cfg = state.config
+    with dpg.tree_node(label="RGC pathway (narrow field)", default_open=True):
+        dpg.add_input_float(
+            label="Dendritic sigma (deg)",
+            default_value=cfg.dendritic.sigma_midget_deg,
+            step=0.001,
+            **_INPUT_FLOAT_FMT,
+            callback=lambda s, a: setattr(cfg.dendritic, "sigma_midget_deg", a),
+        )
+        dpg.add_input_float(
+            label="Max firing (sp/s)",
+            default_value=cfg.rgc_nl.r_max,
+            step=1.0,
+            **_INPUT_FLOAT_FMT,
+            callback=lambda s, a: setattr(cfg.rgc_nl, "r_max", a),
+        )
+        dpg.add_input_float(
+            label="LN slope",
+            default_value=cfg.rgc_nl.slope,
+            step=0.1,
+            **_INPUT_FLOAT_FMT,
+            callback=lambda s, a: setattr(cfg.rgc_nl, "slope", a),
+        )
+        dpg.add_input_float(
+            label="LN half-point",
+            default_value=cfg.rgc_nl.x_half,
+            step=0.01,
+            **_INPUT_FLOAT_FMT,
+            callback=lambda s, a: setattr(cfg.rgc_nl, "x_half", a),
+        )
+        dpg.add_input_float(
+            label="Tau (s)",
+            default_value=cfg.temporal.rgc_tau,
+            step=0.01,
+            **_INPUT_FLOAT_FMT,
+            callback=lambda s, a: setattr(cfg.temporal, "rgc_tau", a),
+        )
+    with dpg.tree_node(label="RGC pathway (wide field)", default_open=False):
+        dpg.add_input_float(
+            label="Dendritic sigma (deg)",
+            default_value=cfg.dendritic.sigma_parasol_deg,
+            step=0.001,
+            **_INPUT_FLOAT_FMT,
+            callback=lambda s, a: setattr(cfg.dendritic, "sigma_parasol_deg", a),
+        )
+        dpg.add_text("(LN r_max / slope / half-point shared with narrow field above)")
+    with dpg.tree_node(label="Bipolar pooling", default_open=False):
+        dpg.add_input_float(
+            label="Sigma diffuse (deg)",
+            default_value=cfg.bipolar.sigma_diffuse_deg,
+            step=0.001,
+            **_INPUT_FLOAT_FMT,
+            callback=lambda s, a: setattr(cfg.bipolar, "sigma_diffuse_deg", a),
+        )
+        dpg.add_input_float(
+            label="Tau (s)",
+            default_value=cfg.temporal.bipolar_tau,
+            step=0.01,
+            **_INPUT_FLOAT_FMT,
+            callback=lambda s, a: setattr(cfg.temporal, "bipolar_tau", a),
+        )
+    with dpg.tree_node(label="Horizontal feedback", default_open=False):
+        dpg.add_input_float(
+            label="Sigma LM (deg)",
+            default_value=cfg.horizontal.sigma_lm_deg,
+            step=0.001,
+            **_INPUT_FLOAT_FMT,
+            callback=lambda s, a: setattr(cfg.horizontal, "sigma_lm_deg", a),
+        )
+        dpg.add_input_float(
+            label="Sigma S (deg)",
+            default_value=cfg.horizontal.sigma_s_deg,
+            step=0.001,
+            **_INPUT_FLOAT_FMT,
+            callback=lambda s, a: setattr(cfg.horizontal, "sigma_s_deg", a),
+        )
+        dpg.add_input_float(
+            label="Alpha LM",
+            default_value=cfg.horizontal.alpha_lm,
+            step=0.01,
+            **_INPUT_FLOAT_FMT,
+            callback=lambda s, a: setattr(cfg.horizontal, "alpha_lm", a),
+        )
+        dpg.add_input_float(
+            label="Alpha S",
+            default_value=cfg.horizontal.alpha_s,
+            step=0.01,
+            **_INPUT_FLOAT_FMT,
+            callback=lambda s, a: setattr(cfg.horizontal, "alpha_s", a),
+        )
+        dpg.add_input_float(
+            label="Tau (s)",
+            default_value=cfg.temporal.horizontal_tau,
+            step=0.01,
+            **_INPUT_FLOAT_FMT,
+            callback=lambda s, a: setattr(cfg.temporal, "horizontal_tau", a),
+        )
+    with dpg.tree_node(label="Lateral inhibition (narrow pool)", default_open=False):
+        dpg.add_input_float(
+            label="Sigma (deg)",
+            default_value=cfg.amacrine.sigma_aii_deg,
+            step=0.001,
+            **_INPUT_FLOAT_FMT,
+            callback=lambda s, a: setattr(cfg.amacrine, "sigma_aii_deg", a),
+        )
+        dpg.add_input_float(
+            label="Gamma (weight)",
+            default_value=cfg.amacrine.gamma_aii,
+            step=0.01,
+            **_INPUT_FLOAT_FMT,
+            callback=lambda s, a: setattr(cfg.amacrine, "gamma_aii", a),
+        )
+        dpg.add_input_float(
+            label="Tau (s)",
+            default_value=cfg.temporal.amacrine_tau,
+            step=0.01,
+            **_INPUT_FLOAT_FMT,
+            callback=lambda s, a: setattr(cfg.temporal, "amacrine_tau", a),
+        )
+    with dpg.tree_node(label="Lateral inhibition (wide pool)", default_open=False):
+        dpg.add_input_float(
+            label="Sigma (deg)",
+            default_value=cfg.amacrine.sigma_wide_deg,
+            step=0.001,
+            **_INPUT_FLOAT_FMT,
+            callback=lambda s, a: setattr(cfg.amacrine, "sigma_wide_deg", a),
+        )
+        dpg.add_input_float(
+            label="Gamma (weight)",
+            default_value=cfg.amacrine.gamma_wide,
+            step=0.01,
+            **_INPUT_FLOAT_FMT,
+            callback=lambda s, a: setattr(cfg.amacrine, "gamma_wide", a),
+        )
+        dpg.add_text("(Tau shared with narrow pool above)")
+    with dpg.tree_node(label="3D Viewer Display", default_open=False):
+        from src.simulation.bio_constants import CONE_FRAC_L, CONE_FRAC_M, CONE_FRAC_S, ROD_CONE_RATIO
+
+        dpg.add_text(f"L cone fraction: {float(CONE_FRAC_L):.3f}")
+        dpg.add_text(f"M cone fraction: {float(CONE_FRAC_M):.3f}")
+        dpg.add_text(f"S cone fraction: {float(CONE_FRAC_S):.3f}")
+        dpg.add_text(f"Rod : Cone ratio: {float(ROD_CONE_RATIO):.1f}")
+    dpg.add_spacer(height=8)
+
+
 def _randomize_connectivity_weights(state: SimState) -> None:
     cw = state.config.connectivity_weights
     for key in ("cone_to_horizontal", "cone_to_bipolar", "horizontal_to_cone",
@@ -840,7 +1005,7 @@ def _randomize_connectivity_weights(state: SimState) -> None:
 
 
 def _build_right_panel(state: SimState) -> None:
-    """Right panel: tab bar so Stats, Export, RF each fit without scrolling."""
+    """Right panel: Stats, Plots, Export, Inspector (3D only)."""
     with dpg.child_window(width=PANEL_WIDTH, height=-1, border=True, autosize_x=False):
         with dpg.tab_bar(tag="right_panel_tabs"):
             with dpg.tab(label="Stats"):
@@ -865,167 +1030,36 @@ def _build_right_panel(state: SimState) -> None:
                         dpg.add_plot_axis(dpg.mvXAxis, tag="hist_x")
                         dpg.add_plot_axis(dpg.mvYAxis, tag="hist_y")
                         dpg.add_bar_series([], [], tag="hist_series", parent="hist_y", weight=0.8)
+            with dpg.tab(label="Plots"):
+                dpg.add_text("Cone mean drive (L / M / S)")
+                with dpg.plot(height=170, width=-1, tag="plot_cone_act"):
+                    dpg.add_plot_legend()
+                    dpg.add_plot_axis(dpg.mvXAxis, label="", tag="plot_cone_ax")
+                    dpg.add_plot_axis(dpg.mvYAxis, label="mean", tag="plot_cone_ay")
+                    dpg.add_bar_series(
+                        [0, 1, 2],
+                        [0.0, 0.0, 0.0],
+                        weight=0.45,
+                        label="cones",
+                        parent="plot_cone_ay",
+                        tag="series_cone_bars",
+                    )
+                dpg.add_text("Opponent means over time (last 80 ticks)")
+                with dpg.plot(height=150, width=-1, tag="plot_oppo_ts"):
+                    dpg.add_plot_legend()
+                    dpg.add_plot_axis(dpg.mvXAxis, label="tick", tag="plot_oppo_ax")
+                    dpg.add_plot_axis(dpg.mvYAxis, label="signal", tag="plot_oppo_ay")
+                    dpg.add_line_series([], [], label="L-M", parent="plot_oppo_ay", tag="series_oppo_lm")
+                    dpg.add_line_series([], [], label="S-(L+M)", parent="plot_oppo_ay", tag="series_oppo_by")
             with dpg.tab(label="Export"):
+                dpg.add_text("Export data")
                 dpg.add_button(label="Save screenshot (PNG)", width=-1, tag="btn_export_png", callback=lambda: dpg.show_item("file_dialog_png"))
                 dpg.add_button(label="Save layer stats (CSV)", width=-1, tag="btn_export_csv", callback=lambda: dpg.show_item("file_dialog_csv"))
                 dpg.add_button(label="Save layer grids (.npy)", width=-1, tag="btn_export_npy", callback=lambda: dpg.show_item("file_dialog_npy"))
-            with dpg.tab(label="Connectivity"):
-                dpg.add_text("Weight matrix (0.0–3.0). Changes apply to pipeline and 3D lines.")
-                cw = state.config.connectivity_weights
-                dpg.add_input_float(label="Cone -> Horizontal", default_value=cw.cone_to_horizontal, min_value=0.0, max_value=3.0, min_clamped=True, max_clamped=True, width=60, tag="conn_cone_to_horizontal",
-                    callback=lambda s, a: (_set_conn_weight(state, "cone_to_horizontal", a), _set_connectivity_dirty()))
-                dpg.add_input_float(label="Cone -> Bipolar", default_value=cw.cone_to_bipolar, min_value=0.0, max_value=3.0, min_clamped=True, max_clamped=True, width=60, tag="conn_cone_to_bipolar",
-                    callback=lambda s, a: (_set_conn_weight(state, "cone_to_bipolar", a), _set_connectivity_dirty()))
-                dpg.add_input_float(label="Horizontal -> Cone", default_value=cw.horizontal_to_cone, min_value=0.0, max_value=3.0, min_clamped=True, max_clamped=True, width=60, tag="conn_horizontal_to_cone",
-                    callback=lambda s, a: (_set_conn_weight(state, "horizontal_to_cone", a), _set_connectivity_dirty()))
-                dpg.add_input_float(label="Bipolar -> Amacrine", default_value=cw.bipolar_to_amacrine, min_value=0.0, max_value=3.0, min_clamped=True, max_clamped=True, width=60, tag="conn_bipolar_to_amacrine",
-                    callback=lambda s, a: (_set_conn_weight(state, "bipolar_to_amacrine", a), _set_connectivity_dirty()))
-                dpg.add_input_float(label="Amacrine -> Bipolar", default_value=cw.amacrine_to_bipolar, min_value=0.0, max_value=3.0, min_clamped=True, max_clamped=True, width=60, tag="conn_amacrine_to_bipolar",
-                    callback=lambda s, a: (_set_conn_weight(state, "amacrine_to_bipolar", a), _set_connectivity_dirty()))
-                dpg.add_input_float(label="Bipolar -> RGC", default_value=cw.bipolar_to_rgc, min_value=0.0, max_value=3.0, min_clamped=True, max_clamped=True, width=60, tag="conn_bipolar_to_rgc",
-                    callback=lambda s, a: (_set_conn_weight(state, "bipolar_to_rgc", a), _set_connectivity_dirty()))
-                dpg.add_button(label="Reset to defaults", tag="conn_reset", callback=lambda: _reset_connectivity_weights(state))
-                dpg.add_button(label="Randomize", tag="conn_randomize", callback=lambda: _randomize_connectivity_weights(state))
-            with dpg.tab(label="Inspector"):
+            with dpg.tab(label="Inspector", tag="inspector_tab"):
                 from src.gui.panels.cell_inspector import build_inspector_panel
-                build_inspector_panel()
-            with dpg.tab(label="Cell Params"):
-                cfg = state.config
-                with dpg.tree_node(label="Midget RGC", default_open=True):
-                    dpg.add_input_float(
-                        label="Dendritic sigma (deg)",
-                        default_value=cfg.dendritic.sigma_midget_deg,
-                        step=0.001,
-                        callback=lambda s, a: setattr(cfg.dendritic, "sigma_midget_deg", a),
-                    )
-                    dpg.add_input_float(
-                        label="Max firing (sp/s)",
-                        default_value=cfg.rgc_nl.r_max,
-                        step=1.0,
-                        callback=lambda s, a: setattr(cfg.rgc_nl, "r_max", a),
-                    )
-                    dpg.add_input_float(
-                        label="LN slope",
-                        default_value=cfg.rgc_nl.slope,
-                        step=0.1,
-                        callback=lambda s, a: setattr(cfg.rgc_nl, "slope", a),
-                    )
-                    dpg.add_input_float(
-                        label="LN half-point",
-                        default_value=cfg.rgc_nl.x_half,
-                        step=0.01,
-                        callback=lambda s, a: setattr(cfg.rgc_nl, "x_half", a),
-                    )
-                    dpg.add_input_float(
-                        label="Tau (s)",
-                        default_value=cfg.temporal.rgc_tau,
-                        step=0.01,
-                        callback=lambda s, a: setattr(cfg.temporal, "rgc_tau", a),
-                    )
-                with dpg.tree_node(label="Parasol RGC", default_open=False):
-                    dpg.add_input_float(
-                        label="Dendritic sigma (deg)",
-                        default_value=cfg.dendritic.sigma_parasol_deg,
-                        step=0.001,
-                        callback=lambda s, a: setattr(cfg.dendritic, "sigma_parasol_deg", a),
-                    )
-                    dpg.add_input_float(
-                        label="Max firing (sp/s)",
-                        default_value=cfg.rgc_nl.r_max,
-                        step=1.0,
-                        callback=lambda s, a: setattr(cfg.rgc_nl, "r_max", a),
-                    )
-                with dpg.tree_node(label="Bipolar (midget/diffuse)", default_open=False):
-                    dpg.add_input_float(
-                        label="Sigma diffuse (deg)",
-                        default_value=cfg.bipolar.sigma_diffuse_deg,
-                        step=0.001,
-                        callback=lambda s, a: setattr(cfg.bipolar, "sigma_diffuse_deg", a),
-                    )
-                    dpg.add_input_float(
-                        label="Tau (s)",
-                        default_value=cfg.temporal.bipolar_tau,
-                        step=0.01,
-                        callback=lambda s, a: setattr(cfg.temporal, "bipolar_tau", a),
-                    )
-                with dpg.tree_node(label="Horizontal Cells", default_open=False):
-                    dpg.add_input_float(
-                        label="Sigma LM (deg)",
-                        default_value=cfg.horizontal.sigma_lm_deg,
-                        step=0.001,
-                        callback=lambda s, a: setattr(cfg.horizontal, "sigma_lm_deg", a),
-                    )
-                    dpg.add_input_float(
-                        label="Sigma S (deg)",
-                        default_value=cfg.horizontal.sigma_s_deg,
-                        step=0.001,
-                        callback=lambda s, a: setattr(cfg.horizontal, "sigma_s_deg", a),
-                    )
-                    dpg.add_input_float(
-                        label="Alpha LM",
-                        default_value=cfg.horizontal.alpha_lm,
-                        step=0.01,
-                        callback=lambda s, a: setattr(cfg.horizontal, "alpha_lm", a),
-                    )
-                    dpg.add_input_float(
-                        label="Alpha S",
-                        default_value=cfg.horizontal.alpha_s,
-                        step=0.01,
-                        callback=lambda s, a: setattr(cfg.horizontal, "alpha_s", a),
-                    )
-                    dpg.add_input_float(
-                        label="Tau (s)",
-                        default_value=cfg.temporal.horizontal_tau,
-                        step=0.01,
-                        callback=lambda s, a: setattr(cfg.temporal, "horizontal_tau", a),
-                    )
-                with dpg.tree_node(label="Amacrine (AII)", default_open=False):
-                    dpg.add_input_float(
-                        label="Sigma (deg)",
-                        default_value=cfg.amacrine.sigma_aii_deg,
-                        step=0.001,
-                        callback=lambda s, a: setattr(cfg.amacrine, "sigma_aii_deg", a),
-                    )
-                    dpg.add_input_float(
-                        label="Gamma (weight)",
-                        default_value=cfg.amacrine.gamma_aii,
-                        step=0.01,
-                        callback=lambda s, a: setattr(cfg.amacrine, "gamma_aii", a),
-                    )
-                    dpg.add_input_float(
-                        label="Tau (s)",
-                        default_value=cfg.temporal.amacrine_tau,
-                        step=0.01,
-                        callback=lambda s, a: setattr(cfg.temporal, "amacrine_tau", a),
-                    )
-                with dpg.tree_node(label="Amacrine (Wide-field)", default_open=False):
-                    dpg.add_input_float(
-                        label="Sigma (deg)",
-                        default_value=cfg.amacrine.sigma_wide_deg,
-                        step=0.001,
-                        callback=lambda s, a: setattr(cfg.amacrine, "sigma_wide_deg", a),
-                    )
-                    dpg.add_input_float(
-                        label="Gamma (weight)",
-                        default_value=cfg.amacrine.gamma_wide,
-                        step=0.01,
-                        callback=lambda s, a: setattr(cfg.amacrine, "gamma_wide", a),
-                    )
-                with dpg.tree_node(label="3D Viewer Display", default_open=False):
-                    from src.simulation.bio_constants import CONE_FRAC_L, CONE_FRAC_M, CONE_FRAC_S, ROD_CONE_RATIO
 
-                    dpg.add_text(f"L cone fraction: {float(CONE_FRAC_L):.3f}")
-                    dpg.add_text(f"M cone fraction: {float(CONE_FRAC_M):.3f}")
-                    dpg.add_text(f"S cone fraction: {float(CONE_FRAC_S):.3f}")
-                    dpg.add_text(f"Rod : Cone ratio: {float(ROD_CONE_RATIO):.1f}")
-                dpg.add_spacer(height=8)
-                dpg.add_button(label="Reset to defaults", width=-1)
-                dpg.add_button(label="Save preset", width=-1)
-                dpg.add_button(label="Load preset", width=-1)
-            with dpg.tab(label="Receptive Field"):
-                dpg.add_combo(label="RGC type", items=["midget_on_L", "midget_off_L", "parasol_on", "parasol_off"], default_value="midget_on_L", tag="rf_rgc_type")
-                dpg.add_button(label="Compute RF (24x24 sweep)", tag="btn_compute_rf", callback=lambda: _shared.update({"rf_pending": True}))
-                dpg.add_text("sigma_c: -  sigma_s: -  ratio: -", tag="rf_dog_result")
+                build_inspector_panel()
 
 
 def _build_center_viewport(display_width: int, display_height: int) -> None:
@@ -1078,6 +1112,35 @@ def _update_stats(state: SimState) -> None:
         dpg.set_value("lm_summary", f"L-M: mean {float(np.mean(state.lm_opponent)):+.3f}")
     if state.by_opponent is not None:
         dpg.set_value("by_summary", f"S-(L+M): mean {float(np.mean(state.by_opponent)):+.3f}")
+    # Plots tab: cone means + opponent trajectories
+    if state.cone_L is not None and dpg.does_item_exist("series_cone_bars"):
+        mL = float(np.mean(state.cone_L))
+        mM = float(np.mean(state.cone_M))
+        mS = float(np.mean(state.cone_S))
+        dpg.set_value("series_cone_bars", [[0, 1, 2], [mL, mM, mS]])
+        ymax = max(1e-9, mL, mM, mS) * 1.15
+        if dpg.does_item_exist("plot_cone_ay"):
+            dpg.set_axis_limits("plot_cone_ay", 0.0, ymax)
+        if dpg.does_item_exist("plot_cone_ax"):
+            dpg.set_axis_limits("plot_cone_ax", -0.5, 2.5)
+    oh = _shared.get("oppo_hist", [])
+    if state.lm_opponent is not None and state.by_opponent is not None:
+        oh.append((float(np.mean(state.lm_opponent)), float(np.mean(state.by_opponent))))
+    oh = oh[-80:]
+    _shared["oppo_hist"] = oh
+    if oh and dpg.does_item_exist("series_oppo_lm"):
+        xs = list(range(len(oh)))
+        dpg.set_value("series_oppo_lm", [xs, [p[0] for p in oh]])
+        dpg.set_value("series_oppo_by", [xs, [p[1] for p in oh]])
+        lms = [p[0] for p in oh]
+        bys = [p[1] for p in oh]
+        lo = min(min(lms), min(bys))
+        hi = max(max(lms), max(bys))
+        pad = max((hi - lo) * 0.1, 0.05) if hi > lo else 0.1
+        if dpg.does_item_exist("plot_oppo_ay"):
+            dpg.set_axis_limits("plot_oppo_ay", lo - pad, hi + pad)
+        if dpg.does_item_exist("plot_oppo_ax"):
+            dpg.set_axis_limits("plot_oppo_ax", 0.0, max(1.0, float(len(oh) - 1)))
     # Per-layer stats
     layer_data = {
         "Stimulus": np.sum(state.stimulus_spectrum, axis=-1) if state.stimulus_spectrum is not None else None,
@@ -1196,7 +1259,10 @@ def run_app() -> None:
         "spatial_freq_cpd": 2.0,
         "phase_deg": 0.0,
         "inner_radius_deg": 0.05,
+        "rgb_mapping_mode": "rgbtolms",
     })
+    if hasattr(state.config, "spectral"):
+        setattr(state.config.spectral, "image_rgb_mapping", "rgbtolms")
     # Second state for background tick (only when using worker); share params so UI updates apply to both
     state_back = None
     if not SIM_ON_MAIN_THREAD:
@@ -1268,8 +1334,12 @@ def run_app() -> None:
     )
     dpg.setup_dearpygui()
     dpg.show_viewport()
-    # Force viewport to default size so all three panels are visible on launch
+    # Fill primary monitor: near-full size, then OS maximize for maximum usable area
     dpg.configure_viewport(0, width=WINDOW_SIZE[0], height=WINDOW_SIZE[1])
+    try:
+        dpg.maximize_viewport()
+    except Exception:
+        pass
 
     dpg.set_primary_window("main_window", True)
 
@@ -1376,7 +1446,6 @@ def run_app() -> None:
     _shared["sim_tick_every_n"] = SIM_TICK_EVERY_N
     _shared["sim_tick_counter"] = 0
     _shared["last_frame"] = None
-    _shared["rf_pending"] = False
     _shared["vispy_viewer"] = None
     _shared["connectivity_dirty"] = False
     _shared["last_mouse_pos"] = None  # for 3D orbit
@@ -1545,21 +1614,6 @@ def run_app() -> None:
                     pass
         _shared["mouse_was_down"] = mouse_down_now
         _shared["mouse_down_pos"] = None if not mouse_down_now else _shared.get("mouse_down_pos")
-
-        # RF compute (runs probe sweep, can be slow)
-        if _shared.get("rf_pending"):
-            _shared["rf_pending"] = False
-            rgc_type = dpg.get_value("rf_rgc_type") if dpg.does_item_exist("rf_rgc_type") else "midget_on_L"
-            try:
-                x_deg, y_deg, rf_map = probe_sweep_fast(state, rgc_type=rgc_type, probe_resolution=24)
-                dog = fit_dog(x_deg, y_deg, rf_map)
-                ratio = dog.sigma_surround / dog.sigma_center if dog.sigma_center > 1e-9 else 0
-                txt = f"sigma_c: {dog.sigma_center:.4f}  sigma_s: {dog.sigma_surround:.4f}  ratio: {ratio:.2f}"
-                if dpg.does_item_exist("rf_dog_result"):
-                    dpg.set_value("rf_dog_result", txt)
-            except Exception as e:
-                if dpg.does_item_exist("rf_dog_result"):
-                    dpg.set_value("rf_dog_result", f"Error: {e}")
 
         # Render: 2D heatmaps (single/all layers) or 3D stack (Vispy)
         view_mode = dpg.get_value("view_mode_combo") if dpg.does_item_exist("view_mode_combo") else "2D Heatmap"

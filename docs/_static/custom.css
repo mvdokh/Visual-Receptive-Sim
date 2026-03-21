@@ -1,0 +1,20 @@
+/* Widen main content: sphinx-rtd-theme defaults to a narrow column (~800px). */
+.wy-nav-content {
+  max-width: none;
+}
+
+.wy-nav-content-wrap {
+  max-width: none;
+}
+
+.rst-content {
+  max-width: none;
+}
+
+/* Use available width on large screens while keeping readable line length for prose */
+@media screen and (min-width: 1100px) {
+  .wy-nav-content {
+    padding-left: 3rem;
+    padding-right: 3rem;
+  }
+}

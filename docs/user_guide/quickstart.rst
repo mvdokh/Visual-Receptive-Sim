@@ -1,7 +1,7 @@
 Quick start
 ===========
 
-This section describes how to **run the application**. For the underlying model and equations, see the :doc:`/concepts/overview` and :doc:`/concepts/equations` sections.
+This section describes how to **run the application**. For the full window layout and where each control lives, see :doc:`interface`. For plots that mirror the heatmap and LN code, see :doc:`examples`. For theory, see :doc:`/concepts/overview` and :doc:`/concepts/equations`.
 
 Installation
 ------------
@@ -22,6 +22,6 @@ Running the simulator
 
 - **Stimulus** is updated every frame from the current stimulus type and parameters (spot, grating, etc.). Time advances with the main loop (variable :math:`\Delta t`).
 - **Pause** is not implemented; the simulation runs continuously while the window is open.
-- **Export**: Use the **Export** tab in the right panel to save a screenshot (PNG), layer stats (CSV), or layer grids (NPY).
+- **Export**: In the **Export** tab (right panel), save a screenshot (PNG), layer stats (CSV), or layer grids (NPY).
 
 For a description of the interface (panels, 2D/3D views, connectivity, etc.), see :doc:`interface`.

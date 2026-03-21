@@ -23,6 +23,11 @@ from typing import Iterable
 import numpy as np
 
 from src.config import GlobalConfig
+from src.simulation.rgc_population import (
+    calibrated_dendritic_sigmas_deg,
+    compute_cross_type_rf_modulation,
+    population_fractions_from_config,
+)
 from src.simulation.state import SimState
 from src.simulation.stimulus.spectral import build_stimulus_spectrum
 from src.simulation.fast_conv import gaussian_pool_2d
@@ -64,6 +69,36 @@ def tick(state: SimState, dt: float) -> None:
     state.ensure_initialized()
     cfg: GlobalConfig = state.config
     state.time += dt
+
+    rpc = getattr(cfg, "rgc_population", None)
+    if rpc is not None and rpc.enabled:
+        tf_rpc = population_fractions_from_config(rpc)
+        mod = compute_cross_type_rf_modulation(tf_rpc)
+        alpha_lm_use = cfg.horizontal.alpha_lm * mod["horizontal_alpha_lm_scale"]
+        alpha_s_use = cfg.horizontal.alpha_s * mod["horizontal_alpha_lm_scale"]
+        gm_aii = cfg.amacrine.gamma_aii * mod["gamma_aii_scale"]
+        gm_wide = cfg.amacrine.gamma_wide * mod["gamma_wide_scale"]
+        sm_deg, sp_deg, si_m_rel, si_p_rel, r_scale, sur_m_deg, sur_p_deg = (
+            calibrated_dendritic_sigmas_deg(
+                tf_rpc,
+                cfg.dendritic.sigma_midget_deg,
+                cfg.dendritic.sigma_parasol_deg,
+                rpc.t5_cluster_bias,
+            )
+        )
+        r_max_eff = cfg.rgc_nl.r_max * r_scale
+    else:
+        alpha_lm_use = cfg.horizontal.alpha_lm
+        alpha_s_use = cfg.horizontal.alpha_s
+        gm_aii = cfg.amacrine.gamma_aii
+        gm_wide = cfg.amacrine.gamma_wide
+        sm_deg = cfg.dendritic.sigma_midget_deg
+        sp_deg = cfg.dendritic.sigma_parasol_deg
+        si_m_rel = 0.0
+        si_p_rel = 0.0
+        sur_m_deg = 0.0
+        sur_p_deg = 0.0
+        r_max_eff = cfg.rgc_nl.r_max
 
     # 1. Stimulus spectrum grid (H, W, L); pass retina so 1° scales with grid
     state.stimulus_spectrum = build_stimulus_spectrum(
@@ -107,22 +142,22 @@ def tick(state: SimState, dt: float) -> None:
     h_s = gaussian_pool_2d(cone_s_in, sigma_H_s, mode="reflect")
     h_to_cone = cw.horizontal_to_cone if cw else 1.0
     state.h_activation = (
-        h_lm * cfg.horizontal.alpha_lm * h_to_cone + h_s * cfg.horizontal.alpha_s * h_to_cone
+        h_lm * alpha_lm_use * h_to_cone + h_s * alpha_s_use * h_to_cone
     )
 
     # 4. Horizontal → cone feedback (surround). Rectify so center is not over-suppressed
     # (avoids a bright ring at the spot edge; cone output is non-negative in standard models).
     state.cone_L_eff = np.maximum(
         0.0,
-        state.cone_L - cfg.horizontal.alpha_lm * state.h_activation,
+        state.cone_L - alpha_lm_use * state.h_activation,
     ).astype(np.float32)
     state.cone_M_eff = np.maximum(
         0.0,
-        state.cone_M - cfg.horizontal.alpha_lm * state.h_activation,
+        state.cone_M - alpha_lm_use * state.h_activation,
     ).astype(np.float32)
     state.cone_S_eff = np.maximum(
         0.0,
-        state.cone_S - cfg.horizontal.alpha_s * state.h_activation,
+        state.cone_S - alpha_s_use * state.h_activation,
     ).astype(np.float32)
 
     # 5. Bipolar responses (cone_to_bipolar scales effective cone input)
@@ -151,50 +186,60 @@ def tick(state: SimState, dt: float) -> None:
     state.amacrine_wide = gaussian_pool_2d(cone_lm_eff * bp_to_am, sigma_wide, mode="reflect")
 
     total_amacrine = (
-        cfg.amacrine.gamma_aii * am_to_bp * state.amacrine_aii
-        + cfg.amacrine.gamma_wide * am_to_bp * state.amacrine_wide
+        gm_aii * am_to_bp * state.amacrine_aii
+        + gm_wide * am_to_bp * state.amacrine_wide
     )
 
     # 7. RGC generators (bipolar_to_rgc scales drive)
     bp_to_rgc = cw.bipolar_to_rgc if cw else 1.0
 
-    def rgc_generator(bp_grid: np.ndarray, sigma_deg: float) -> np.ndarray:
-        sigma_px = sigma_deg / cfg.retina.dx_deg
+    def rgc_generator(
+        bp_grid: np.ndarray,
+        sigma_center_deg: float,
+        sigma_surround_deg: float,
+        si_rel: float,
+    ) -> np.ndarray:
+        sigma_c_px = sigma_center_deg / cfg.retina.dx_deg
         drive = (bp_grid - total_amacrine) * bp_to_rgc
-        return gaussian_pool_2d(drive, sigma_px, mode="reflect")
+        center = gaussian_pool_2d(drive, sigma_c_px, mode="reflect")
+        if si_rel <= 1e-12 or sigma_surround_deg <= 1e-12:
+            return center
+        sigma_s_px = sigma_surround_deg / cfg.retina.dx_deg
+        surr = gaussian_pool_2d(drive, sigma_s_px, mode="reflect")
+        return center - si_rel * surr
 
     state.rgc_midget_on_L = rgc_generator(
-        state.bp_midget_on_L, cfg.dendritic.sigma_midget_deg
+        state.bp_midget_on_L, sm_deg, sur_m_deg, si_m_rel
     )
     state.rgc_midget_off_L = rgc_generator(
-        state.bp_midget_off_L, cfg.dendritic.sigma_midget_deg
+        state.bp_midget_off_L, sm_deg, sur_m_deg, si_m_rel
     )
     state.rgc_midget_on_M = rgc_generator(
-        state.bp_midget_on_M, cfg.dendritic.sigma_midget_deg
+        state.bp_midget_on_M, sm_deg, sur_m_deg, si_m_rel
     )
     state.rgc_midget_off_M = rgc_generator(
-        state.bp_midget_off_M, cfg.dendritic.sigma_midget_deg
+        state.bp_midget_off_M, sm_deg, sur_m_deg, si_m_rel
     )
     state.rgc_parasol_on = rgc_generator(
-        state.bp_diffuse_on, cfg.dendritic.sigma_parasol_deg
+        state.bp_diffuse_on, sp_deg, sur_p_deg, si_p_rel
     )
     state.rgc_parasol_off = rgc_generator(
-        state.bp_diffuse_off, cfg.dendritic.sigma_parasol_deg
+        state.bp_diffuse_off, sp_deg, sur_p_deg, si_p_rel
     )
 
     # 8. LN sigmoid → firing rates
     nl = cfg.rgc_nl
-    state.fr_midget_on_L = sigmoid_ln(state.rgc_midget_on_L, nl.r_max, nl.x_half, nl.slope)
+    state.fr_midget_on_L = sigmoid_ln(state.rgc_midget_on_L, r_max_eff, nl.x_half, nl.slope)
     state.fr_midget_off_L = sigmoid_ln(
-        state.rgc_midget_off_L, nl.r_max, nl.x_half, nl.slope
+        state.rgc_midget_off_L, r_max_eff, nl.x_half, nl.slope
     )
-    state.fr_midget_on_M = sigmoid_ln(state.rgc_midget_on_M, nl.r_max, nl.x_half, nl.slope)
+    state.fr_midget_on_M = sigmoid_ln(state.rgc_midget_on_M, r_max_eff, nl.x_half, nl.slope)
     state.fr_midget_off_M = sigmoid_ln(
-        state.rgc_midget_off_M, nl.r_max, nl.x_half, nl.slope
+        state.rgc_midget_off_M, r_max_eff, nl.x_half, nl.slope
     )
-    state.fr_parasol_on = sigmoid_ln(state.rgc_parasol_on, nl.r_max, nl.x_half, nl.slope)
+    state.fr_parasol_on = sigmoid_ln(state.rgc_parasol_on, r_max_eff, nl.x_half, nl.slope)
     state.fr_parasol_off = sigmoid_ln(
-        state.rgc_parasol_off, nl.r_max, nl.x_half, nl.slope
+        state.rgc_parasol_off, r_max_eff, nl.x_half, nl.slope
     )
 
     # 9. Color opponent signals
