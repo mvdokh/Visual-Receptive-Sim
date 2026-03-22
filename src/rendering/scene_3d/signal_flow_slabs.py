@@ -12,6 +12,7 @@ from typing import Dict, Optional
 
 import moderngl
 import numpy as np
+from skimage.transform import resize as sk_resize
 
 from src.config import signal_flow_slab_layout
 from src.rendering.heatmap import ColormapName, grid_to_rgba
@@ -156,7 +157,14 @@ def create_slabs(ctx: moderngl.Context, state) -> Dict[str, LayerSlab]:
         if img.ndim == 2:
             img = np.stack([img, img, img], axis=-1)
         if img.shape[0] != h or img.shape[1] != w:
-            img = np.resize(img, (h, w, img.shape[2]))
+            img = sk_resize(
+                img,
+                (h, w),
+                order=1,
+                mode="reflect",
+                anti_aliasing=True,
+                preserve_range=True,
+            ).astype(np.float32)
         vmax = float(img.max()) if img.size > 0 else 0.0
         if vmax > 1.0:
             img = img / 255.0

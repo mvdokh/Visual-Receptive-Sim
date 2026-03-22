@@ -39,6 +39,53 @@ from skimage.transform import resize
 from src.config import SpectralConfig, default_config
 from src.simulation.rgb_mapping import build_emission_from_rgb, resample_spd_to_spectral_grid
 
+# Monitor primaries from rgbtolms are in small radiometric units; Gaussian stimuli use peak ~1.
+# Cache scales so RGB→SPD image stimuli match cone-drive magnitude of the Gaussian anchor (see below).
+_RGBTOLMS_SCALE_CACHE: dict[tuple[int, int, int, str], float] = {}
+
+
+def _rgbtolms_stimulus_scale(spectral: SpectralConfig) -> float:
+    """
+    Scale factor so image stimuli using rgbtolms have similar cone drive to other stimulus types.
+
+    Gaussian-based stimuli (spot, full_field, legacy RGB basis) use profiles normalized to ~peak 1.
+    ``build_emission_from_rgb`` SPDs are much smaller in absolute units, so without scaling the
+    einsum with L/M/S fundamentals yields ~300× weaker drive and cones appear not to respond.
+    We anchor white RGB (1,1,1) to the same max(L,M,S) linear response as a 550 nm Gaussian
+    with unit peak (same profile as the fast full_field path).
+    """
+    key = (
+        int(spectral.lambda_min),
+        int(spectral.lambda_max),
+        int(spectral.lambda_step),
+        str(spectral.fundamentals_csv),
+    )
+    if key in _RGBTOLMS_SCALE_CACHE:
+        return _RGBTOLMS_SCALE_CACHE[key]
+
+    lam = spectral.wavelengths.astype(np.float32)
+    SL = spectral.sens_L.astype(np.float32)
+    SM = spectral.sens_M.astype(np.float32)
+    SS = spectral.sens_S.astype(np.float32)
+
+    profile = np.exp(-0.5 * ((lam - 550.0) / 10.0) ** 2).astype(np.float32)
+    profile *= 1.0 / max(float(profile.max()), 1e-6)
+    rL = float(np.dot(profile, SL))
+    rM = float(np.dot(profile, SM))
+    rS = float(np.dot(profile, SS))
+    ref_mag = max(rL, rM, rS)
+
+    wl_src, em = build_emission_from_rgb(np.ones((1, 1, 3), dtype=np.float32))
+    spec_w = resample_spd_to_spectral_grid(wl_src, em, lam).reshape(-1)
+    iL = float(np.dot(spec_w, SL))
+    iM = float(np.dot(spec_w, SM))
+    iS = float(np.dot(spec_w, SS))
+    img_mag = max(iL, iM, iS)
+
+    scale = ref_mag / max(img_mag, 1e-12)
+    _RGBTOLMS_SCALE_CACHE[key] = scale
+    return scale
+
 
 def build_stimulus_spectrum(
     params: Dict[str, float] | None,
@@ -197,7 +244,7 @@ def build_stimulus_spectrum(
         if mapping_mode == "rgbtolms":
             wl_src, emission = build_emission_from_rgb(img)
             spectrum_img = resample_spd_to_spectral_grid(wl_src, emission, lam)
-            spectrum[:] = spectrum_img
+            spectrum[:] = spectrum_img * _rgbtolms_stimulus_scale(spectral)
             if intensity != 1.0:
                 spectrum *= intensity
             return spectrum

@@ -12,7 +12,7 @@ import random
 import threading
 import time
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
 # Run simulation on main thread (no background worker) for smoother 60 FPS; set SIM_ON_MAIN_THREAD=1
 SIM_ON_MAIN_THREAD = os.environ.get("SIM_ON_MAIN_THREAD", "").strip().lower() in ("1", "true", "yes")
@@ -102,18 +102,29 @@ LAYER_KEY_TO_DENSITY = {
 }
 
 
-COMPOSITE_LAYER_ORDER_2D = [
-    # Row 0
-    "Stimulus",
-    "Cones L",
-    "Cones M",
-    "Cones S",
-    # Row 1
-    "Horizontal",
-    "Bipolar ON",
-    "Amacrine",
-    "RGC Firing (L)",
-]
+# 2D All Layers: 4 rows × 3 columns — stimulus (span 3), cones L/M/S, H/Bip/Am, RGC (span 3).
+# Each entry: (row index 0..3, col 0..2, col_span 1|3, layer_key)
+COMPOSITE_LAYOUT_2D: Tuple[Tuple[int, int, int, str], ...] = (
+    (0, 0, 3, "Stimulus"),
+    (1, 0, 1, "Cones L"),
+    (1, 1, 1, "Cones M"),
+    (1, 2, 1, "Cones S"),
+    (2, 0, 1, "Horizontal"),
+    (2, 1, 1, "Bipolar ON"),
+    (2, 2, 1, "Amacrine"),
+    (3, 0, 3, "RGC Firing (L)"),
+)
+
+ALL_LAYERS_ABBREV_3: dict[str, str] = {
+    "Stimulus": "STM",
+    "Cones L": "CNL",
+    "Cones M": "CNM",
+    "Cones S": "CNS",
+    "Horizontal": "HOR",
+    "Bipolar ON": "BIP",
+    "Amacrine": "AMA",
+    "RGC Firing (L)": "RGC",
+}
 
 
 def _panel_section_gap() -> None:
@@ -140,10 +151,21 @@ def _set_convergence_note(layer_name: str) -> None:
     dpg.set_value("layer_convergence_note", notes.get(layer_name, ""))
 
 
-PANEL_WIDTH = 400
+LEFT_PANEL_WIDTH = 400
+RIGHT_PANEL_WIDTH = 340
 # Minimum size: all three panels (left + center min + right) must fit
 MIN_VIEWPORT_WIDTH = 400
-MIN_WINDOW_SIZE: Tuple[int, int] = (MIN_VIEWPORT_WIDTH + 2 * PANEL_WIDTH, 640)
+MIN_WINDOW_SIZE: Tuple[int, int] = (
+    MIN_VIEWPORT_WIDTH + LEFT_PANEL_WIDTH + RIGHT_PANEL_WIDTH,
+    640,
+)
+
+# Center viewport: texture letterbox, empty texture, 2D All Layers canvas, and (via theme) child_window fill
+VIEWPORT_PANEL_BG_RGB_U8: Tuple[int, int, int] = (16, 16, 16)
+_VIEWPORT_PANEL_BG_F = tuple(c / 255.0 for c in VIEWPORT_PANEL_BG_RGB_U8) + (1.0,)
+VIEWPORT_BG_RGBA: Tuple[float, float, float, float] = _VIEWPORT_PANEL_BG_F
+ALL_LAYERS_BG_RGBA: Tuple[float, float, float, float] = _VIEWPORT_PANEL_BG_F
+ALL_LAYERS_STRIP_RGBA: Tuple[float, float, float, float] = _VIEWPORT_PANEL_BG_F
 
 
 def _default_window_size() -> Tuple[int, int]:
@@ -167,6 +189,7 @@ WINDOW_SIZE: Tuple[int, int] = _default_window_size()
 VIEWPORT_TEX_TAG = "rgc_viewport_tex"
 VIEWPORT_AREA_TAG = "viewport_area"
 VIEWPORT_IMAGE_TAG = "viewport_image"
+VIEWPORT_AREA_THEME_TAG = "viewport_area_theme"
 DATA_EXPORTS_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "exports"
 
 # Shared state for export callbacks, RF compute, and mouse orbit (updated each frame)
@@ -183,12 +206,21 @@ def _render_stimulus_rgba(state: SimState) -> np.ndarray:
     # user sees the true pixel colors rather than the spectral
     # centroid approximation used internally for cones.
     if stim_type == "image" and "image_mask" in state.stimulus_params:
+        from skimage.transform import resize as sk_resize
+
         img = np.asarray(state.stimulus_params["image_mask"], dtype=np.float32)
         h, w = state.grid_shape()
         if img.ndim == 2:
             img = np.stack([img, img, img], axis=-1)
         if img.shape[0] != h or img.shape[1] != w:
-            img = np.resize(img, (h, w, img.shape[2]))
+            img = sk_resize(
+                img,
+                (h, w),
+                order=1,
+                mode="reflect",
+                anti_aliasing=True,
+                preserve_range=True,
+            ).astype(np.float32)
         vmax = float(img.max()) if img.size > 0 else 0.0
         if vmax > 1.0:
             img = img / 255.0
@@ -267,100 +299,85 @@ def _grid_to_rgba_absolute_firing(
     return grid_to_rgba(n, colormap=colormap)
 
 
-def _get_tile_label_font() -> ImageFont.FreeTypeFont | ImageFont.ImageFont | None:
-    """Return cached small font for tile labels, or None on failure."""
-    font = _shared.get("tile_label_font")
+def _resize_rgba_to_hw(rgba: np.ndarray, h: int, w: int) -> np.ndarray:
+    """Resize (H,W,4) float RGBA to exact (h,w,4)."""
+    if rgba.shape[0] == h and rgba.shape[1] == w:
+        return rgba
+    rgba_clipped = np.clip(rgba, 0.0, 1.0)
+    img_pil = Image.fromarray((rgba_clipped * 255.0).astype(np.uint8), mode="RGBA")
+    img_pil = img_pil.resize((w, h), Image.BILINEAR)
+    out = np.asarray(img_pil, dtype=np.uint8).astype(np.float32) / 255.0
+    return out.astype(np.float32)
+
+
+def _get_tile_abbrev_font() -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    """Small font for 3-letter codes in the strip above each heatmap."""
+    font = _shared.get("tile_abbrev_font")
     if font is not None:
         return font
     try:
-        # Prefer a common sans font; fall back to default bitmap font.
-        try:
-            font = ImageFont.truetype("DejaVuSans.ttf", 14)
-        except Exception:
-            font = ImageFont.load_default()
-        _shared["tile_label_font"] = font
-        return font
+        font = ImageFont.truetype("DejaVuSans.ttf", 9)
     except Exception:
-        return None
+        font = ImageFont.load_default()
+    _shared["tile_abbrev_font"] = font
+    return font
 
 
-def _draw_tile_label(
-    canvas: np.ndarray,
-    text: str,
-    tile_row: int,
-    tile_col: int,
-    tile_h: int,
-    tile_w: int,
-) -> None:
-    """Draw a small label near the top-left of the specified tile in-place on the canvas."""
-    font = _get_tile_label_font()
-    if font is None or not text:
+def _draw_strip_abbrev(canvas: np.ndarray, abbrev: str, x0: int, y0: int, w: int, h: int) -> None:
+    """Strip above the heatmap (not on map pixels); 3-letter code top-right, white text."""
+    if w <= 0 or h <= 0 or not abbrev:
         return
-    canvas_h, canvas_w = canvas.shape[0], canvas.shape[1]
-    # Label dimensions: fraction of tile size, clamped to sane bounds.
-    label_h = max(14, min(int(tile_h * 0.22), 32))
-    label_w = max(60, min(int(tile_w * 0.8), 220))
+    ch, cw = canvas.shape[0], canvas.shape[1]
+    x0c, y0c = max(0, x0), max(0, y0)
+    x1c, y1c = min(cw, x0 + w), min(ch, y0 + h)
+    sw, sh = x1c - x0c, y1c - y0c
+    if sw <= 0 or sh <= 0:
+        return
+    strip = tuple(int(c * 255) for c in ALL_LAYERS_STRIP_RGBA[:3]) + (255,)
+    layer = Image.new("RGBA", (sw, sh), strip)
+    draw = ImageDraw.Draw(layer)
+    font = _get_tile_abbrev_font()
+    text_color = (255, 255, 255, 255)
     try:
-        label_img = Image.new("RGBA", (label_w, label_h), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(label_img)
-        # Background strip with strong opacity for readability.
-        bg_color = (0, 0, 0, 210)
-        draw.rectangle([0, 0, label_w, label_h], fill=bg_color)
-        text_color = (255, 255, 255, 255)
-        tw, th = draw.textsize(text, font=font)
-        tx = 6
-        ty = max(0, (label_h - th) // 2)
-        draw.text((tx, ty), text, font=font, fill=text_color)
-        fg = np.asarray(label_img, dtype=np.uint8).astype(np.float32) / 255.0
+        bbox = draw.textbbox((0, 0), abbrev, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     except Exception:
-        return
-    # Position within tile with small margin.
-    y0 = tile_row * tile_h + 6
-    x0 = tile_col * tile_w + 6
-    y1 = min(canvas_h, y0 + label_h)
-    x1 = min(canvas_w, x0 + label_w)
-    if y0 >= y1 or x0 >= x1:
-        return
-    sh = y1 - y0
-    sw = x1 - x0
-    fg_crop = fg[:sh, :sw, :]
-    bg = canvas[y0:y1, x0:x1, :]
-    alpha = fg_crop[..., 3:4]
-    canvas[y0:y1, x0:x1, :] = alpha * fg_crop + (1.0 - alpha) * bg
+        tw, th = len(abbrev) * 5, 9
+    rx = max(0, sw - tw - 3)
+    ry = max(0, (sh - th) // 2)
+    draw.text((rx, ry), abbrev, font=font, fill=text_color)
+    fg = np.asarray(layer, dtype=np.float32) / 255.0
+    canvas[y0c:y1c, x0c:x1c, :] = fg
 
 
 def _render_all_layers_composite(state: SimState) -> np.ndarray:
     """
-    Assemble all 8 logical layers into a single 2×4 tiled composite canvas.
-
-    Returns (Hc, Wc, 4) float32 RGBA in 0–1 where Hc = 2*grid_h, Wc = 4*grid_w.
+    Assemble all 8 layers into a 4×3 (rows × cols) grid: stimulus and RGC span three
+    columns but keep native grid aspect (centered, not stretched). Cones L/M/S and
+    H/Bip/Am are one column each. Strips above heatmaps hold 3-letter codes (white text).
     """
     grid_h, grid_w = state.grid_shape()
-    comp_h, comp_w = 2 * grid_h, 4 * grid_w
+    label_strip_h = max(12, min(18, int(grid_h * 0.055)))
+    row_gap = 2
+    comp_w = 3 * grid_w
+    comp_h = 4 * grid_h + 4 * label_strip_h + 3 * row_gap
+
+    bg = np.asarray(ALL_LAYERS_BG_RGBA, dtype=np.float32)
     canvas = _shared.get("all_layers_rgba")
     if not isinstance(canvas, np.ndarray) or canvas.shape[:2] != (comp_h, comp_w):
-        canvas = np.zeros((comp_h, comp_w, 4), dtype=np.float32)
+        canvas = np.empty((comp_h, comp_w, 4), dtype=np.float32)
         _shared["all_layers_rgba"] = canvas
-    else:
-        canvas[...] = 0.0
+    canvas[...] = bg
 
-    # Cones: display as "activity" (1 - cone) so light = dim, dark = bright; shared max = 1.0.
     cone_L = state.cone_L if state.cone_L is not None else None
     cone_M = state.cone_M if state.cone_M is not None else None
     cone_S = state.cone_S if state.cone_S is not None else None
-    cone_max_inverted = 1.0  # inverted scale: activity in [0, 1]
+    cone_max_inverted = 1.0
 
-    for idx, layer_key in enumerate(COMPOSITE_LAYER_ORDER_2D):
-        row = idx // 4
-        col = idx % 4
-        r0 = row * grid_h
-        r1 = (row + 1) * grid_h
-        c0 = col * grid_w
-        c1 = (col + 1) * grid_w
+    def tile_rgba_for(layer_key: str) -> np.ndarray:
         if layer_key == "Stimulus":
-            tile_rgba = _render_stimulus_rgba(state)
-        elif layer_key in ("Cones L", "Cones M", "Cones S"):
-            # Inverted: activity = 1 - cone (light → less glutamate → dim; dark → bright).
+            return _render_stimulus_rgba(state)
+        if layer_key in ("Cones L", "Cones M", "Cones S"):
             if layer_key == "Cones L":
                 grid = np.asarray(cone_L if cone_L is not None else np.zeros(state.grid_shape(), dtype=np.float32), dtype=np.float32).copy()
             elif layer_key == "Cones M":
@@ -373,19 +390,31 @@ def _render_all_layers_composite(state: SimState) -> np.ndarray:
                     scale = RELATIVE_DENSITY["rgc"] / RELATIVE_DENSITY[dkey]
                     grid = np.clip(grid * scale, 0.0, None)
             grid = 1.0 - np.clip(grid, 0.0, 1.0)
-            tile_rgba = _grid_to_rgba_absolute_firing(grid, cone_max_inverted, _get_heatmap_colormap())
-        else:
-            tile_rgba = _render_layer_rgba(state, layer_key)
-        # Defensive: ensure tile matches expected size.
-        th, tw = tile_rgba.shape[0], tile_rgba.shape[1]
-        if th != grid_h or tw != grid_w:
-            th = min(th, grid_h)
-            tw = min(tw, grid_w)
-            canvas[r0 : r0 + th, c0 : c0 + tw, :] = tile_rgba[:th, :tw, :]
-        else:
-            canvas[r0:r1, c0:c1, :] = tile_rgba
-        label_text = LAYER_KEY_TO_DISPLAY.get(layer_key, layer_key)
-        _draw_tile_label(canvas, label_text, row, col, grid_h, grid_w)
+            return _grid_to_rgba_absolute_firing(grid, cone_max_inverted, _get_heatmap_colormap())
+        return _render_layer_rgba(state, layer_key)
+
+    y_cursor = 0
+    for row in range(4):
+        y_strip = y_cursor
+        y_heat = y_cursor + label_strip_h
+        cells = [(c0, cspan, lk) for (r, c0, cspan, lk) in COMPOSITE_LAYOUT_2D if r == row]
+        for c0, cspan, layer_key in cells:
+            x0 = c0 * grid_w
+            tile_w = cspan * grid_w
+            raw = tile_rgba_for(layer_key)
+            if raw.shape[0] != grid_h or raw.shape[1] != grid_w:
+                raw = _resize_rgba_to_hw(raw, grid_h, grid_w)
+            abbrev = ALL_LAYERS_ABBREV_3.get(layer_key, layer_key[:3].upper())
+            if cspan >= 3:
+                x_off = max(0, (tile_w - grid_w) // 2)
+                canvas[y_heat : y_heat + grid_h, x0 + x_off : x0 + x_off + grid_w, :] = raw
+                _draw_strip_abbrev(canvas, abbrev, x0 + x_off, y_strip, grid_w, label_strip_h)
+            else:
+                canvas[y_heat : y_heat + grid_h, x0 : x0 + grid_w, :] = raw
+                _draw_strip_abbrev(canvas, abbrev, x0, y_strip, grid_w, label_strip_h)
+        y_cursor += label_strip_h + grid_h
+        if row < 3:
+            y_cursor += row_gap
 
     draw_scale_bar_rgba(
         canvas,
@@ -396,7 +425,12 @@ def _render_all_layers_composite(state: SimState) -> np.ndarray:
     return canvas
 
 
-def _resize_rgba_to_display(rgba: np.ndarray, display_h: int, display_w: int) -> np.ndarray:
+def _resize_rgba_to_display(
+    rgba: np.ndarray,
+    display_h: int,
+    display_w: int,
+    letterbox_bg: Optional[Tuple[float, float, float, float]] = None,
+) -> np.ndarray:
     """Resize float32 RGBA 0–1 image to the fixed display size using a high-quality filter.
 
     Preserves aspect ratio by letterboxing into the target texture.
@@ -416,19 +450,26 @@ def _resize_rgba_to_display(rgba: np.ndarray, display_h: int, display_w: int) ->
         if small.shape[2] == 3:
             alpha = np.ones((target_h, target_w, 1), dtype=np.float32)
             small = np.concatenate([small, alpha], axis=-1)
-        # Letterbox into full texture size with a dark background.
-        bg_color = np.array([0.02, 0.02, 0.04, 1.0], dtype=np.float32)
+        # Letterbox into full texture size (grey for 2D All Layers, dark blue-gray otherwise).
+        bg_color = np.asarray(letterbox_bg or VIEWPORT_BG_RGBA, dtype=np.float32)
         out = np.broadcast_to(bg_color, (display_h, display_w, 4)).copy()
         offset_y = max(0, (display_h - target_h) // 2)
         offset_x = max(0, (display_w - target_w) // 2)
         out[offset_y : offset_y + target_h, offset_x : offset_x + target_w, :] = small
         return out.astype(np.float32)
     except Exception:
-        # Fallback: simple nearest-neighbor via slicing when PIL is unavailable.
+        # Fallback: downsample then letterbox (never return a crop without fill — that read as black).
+        bg = np.asarray(letterbox_bg or VIEWPORT_BG_RGBA, dtype=np.float32)
+        out = np.broadcast_to(bg, (display_h, display_w, 4)).copy()
         step_y = max(1, h // max(display_h, 1))
         step_x = max(1, w // max(display_w, 1))
-        resized = rgba_clipped[::step_y, ::step_x][:display_h, :display_w]
-        return resized.astype(np.float32)
+        resized = rgba_clipped[::step_y, ::step_x]
+        th, tw = min(resized.shape[0], display_h), min(resized.shape[1], display_w)
+        resized = resized[:th, :tw, :]
+        oy = max(0, (display_h - th) // 2)
+        ox = max(0, (display_w - tw) // 2)
+        out[oy : oy + th, ox : ox + tw, :] = resized
+        return out.astype(np.float32)
 
 
 def _ensure_cell_positions(state: SimState) -> CellPositions:
@@ -590,7 +631,7 @@ def _build_menu_bar() -> None:
 
 
 def _build_left_panel(state: SimState) -> None:
-    with dpg.child_window(width=PANEL_WIDTH, height=-1, border=True, autosize_x=False):
+    with dpg.child_window(width=LEFT_PANEL_WIDTH, height=-1, border=True, autosize_x=False):
         dpg.add_text("View")
         dpg.add_combo(
             label="Mode",
@@ -1006,7 +1047,7 @@ def _randomize_connectivity_weights(state: SimState) -> None:
 
 def _build_right_panel(state: SimState) -> None:
     """Right panel: Stats, Plots, Export, Inspector (3D only)."""
-    with dpg.child_window(width=PANEL_WIDTH, height=-1, border=True, autosize_x=False):
+    with dpg.child_window(width=RIGHT_PANEL_WIDTH, height=-1, border=True, autosize_x=False):
         with dpg.tab_bar(tag="right_panel_tabs"):
             with dpg.tab(label="Stats"):
                 dpg.add_text("Mean FR per RGC type (sp/s)")
@@ -1064,6 +1105,12 @@ def _build_right_panel(state: SimState) -> None:
 
 def _build_center_viewport(display_width: int, display_height: int) -> None:
     """Center panel: displays the simulation heatmap or 3D stack plus 3D toolbar."""
+    # Match padding around the centered image to RGB(16,16,16) — default ChildBg reads as black.
+    r, g, b = VIEWPORT_PANEL_BG_RGB_U8
+    with dpg.theme(tag=VIEWPORT_AREA_THEME_TAG):
+        with dpg.theme_component(dpg.mvChildWindow):
+            dpg.add_theme_color(dpg.mvThemeCol_ChildBg, (r, g, b, 255))
+            dpg.add_theme_color(dpg.mvThemeCol_WindowBg, (r, g, b, 255))
     with dpg.child_window(border=True, width=-1, height=-1, tag=VIEWPORT_AREA_TAG):
         with dpg.group(horizontal=False):
             # Image tag so we can resize/center each frame; initial size placeholder
@@ -1099,6 +1146,8 @@ def _build_center_viewport(display_width: int, display_height: int) -> None:
                     tag="viewer3d_cells",
                 )
                 dpg.add_checkbox(label="Max density", tag="viewer3d_max_density", default_value=False)
+
+    dpg.bind_item_theme(VIEWPORT_AREA_TAG, VIEWPORT_AREA_THEME_TAG)
 
 
 def _update_stats(state: SimState) -> None:
@@ -1282,7 +1331,10 @@ def run_app() -> None:
 
     with dpg.texture_registry():
         # Initialize with dark gray (matches 3D clear color) to avoid flashing on load
-        empty_tex = np.full((display_h, display_w, 4), [0.02, 0.02, 0.04, 1.0], dtype=np.float32)
+        empty_tex = np.broadcast_to(
+            np.asarray(VIEWPORT_BG_RGBA, dtype=np.float32),
+            (display_h, display_w, 4),
+        ).copy()
         dpg.add_dynamic_texture(
             display_w,
             display_h,
@@ -1379,16 +1431,27 @@ def run_app() -> None:
     def _on_stim_image(sender, app_data):
         """Load an external image/photo as a stimulus mask."""
         path = app_data.get("file_path_name")
+        if isinstance(path, (list, tuple)) and path:
+            path = path[0]
         if not path:
+            return
+        st = _shared.get("state_front") or _shared.get("state")
+        if st is None:
             return
         try:
             # Keep RGB so that colors can be binned by L/M/S.
             img = Image.open(path).convert("RGB")
-            h, w = state.grid_shape()
+            h, w = st.grid_shape()
             img = img.resize((w, h), Image.BILINEAR)
             arr = np.asarray(img, dtype=np.float32)
             # Store in 0–1 so spectral construction can preserve RGB ratios.
-            state.stimulus_params["image_mask"] = (arr / 255.0).astype(np.float32)
+            st.stimulus_params["image_mask"] = (arr / 255.0).astype(np.float32)
+            # Must use stimulus type "image" or the pipeline keeps the previous
+            # stimulus (e.g. spot) and ignores image_mask.
+            st.stimulus_params["type"] = "image"
+            if dpg.does_item_exist("stimulus_type_combo"):
+                dpg.set_value("stimulus_type_combo", "image")
+            _update_stimulus_visibility("image", st)
         except Exception as e:
             # Fallback: simple stderr print so the app keeps running.
             print(f"Failed to load stimulus image: {e}")
@@ -1495,7 +1558,10 @@ def run_app() -> None:
             dpg.configure_item("main_window", width=vw, height=vh)
             # Pin center width; reserve pixels for borders/spacing so no horizontal scroll
             slack = 32  # borders and gaps between panels
-            center_w = max(MIN_VIEWPORT_WIDTH, vw - 2 * PANEL_WIDTH - slack)
+            center_w = max(
+                MIN_VIEWPORT_WIDTH,
+                vw - LEFT_PANEL_WIDTH - RIGHT_PANEL_WIDTH - slack,
+            )
             dpg.configure_item(VIEWPORT_AREA_TAG, width=center_w)
 
             # Size and center the heatmap/3D image in the middle panel (max space, centered)
@@ -1715,7 +1781,9 @@ def run_app() -> None:
                 if dpg.does_item_exist("layer_convergence_note"):
                     dpg.set_value("layer_convergence_note", "")
                 comp_rgba = _render_all_layers_composite(state)
-                rgba = _resize_rgba_to_display(comp_rgba, display_h, display_w)
+                rgba = _resize_rgba_to_display(
+                    comp_rgba, display_h, display_w, ALL_LAYERS_BG_RGBA
+                )
             else:
                 # 2D single-layer heatmap: combo value is display label; resolve to internal key.
                 layer_display = dpg.get_value("layer_combo") if dpg.does_item_exist("layer_combo") else LAYER_KEY_TO_DISPLAY.get("RGC Firing (L)", "RGC Firing (L)")

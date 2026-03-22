@@ -58,7 +58,14 @@ tests/                  # pytest suite, bench_performance.py
 
 TODO:
 - update documentation
-- fix "too many bins for data range. cannot create 16 finite-sized bins" error when loading image
+- Traceback (most recent call last):
+  File "/Users/martindokholyan/Desktop/Visual-Receptive-Sim/src/gui/app.py", line 867, in <lambda>
+    callback=lambda s, a, k=key: (_set_conn_weight(state, k, a), _set_connectivity_dirty()),
+                                  ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/Users/martindokholyan/Desktop/Visual-Receptive-Sim/src/gui/app.py", line 813, in _set_conn_weight
+    setattr(state.config.connectivity_weights, key, max(0.0, min(3.0, value)))
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: attribute name must be string, not 'NoneType'
 - fix oscilloscope plane
 - fix scale bar plane in 3d viewer
 - fix cell activity contrast in 3d viewer
