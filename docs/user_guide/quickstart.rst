@@ -1,7 +1,7 @@
 Quick start
 ===========
 
-This section describes how to **run the application**. For the full window layout and where each control lives, see :doc:`interface`. For plots that mirror the heatmap and LN code, see :doc:`examples`. For theory, see :doc:`/concepts/overview` and :doc:`/concepts/equations`.
+This section describes how to **run the application**. For the full window layout and where each control lives, see :doc:`interface`. For the model in symbols, see :doc:`/concepts/overview` and :doc:`/concepts/equations`.
 
 Installation
 ------------

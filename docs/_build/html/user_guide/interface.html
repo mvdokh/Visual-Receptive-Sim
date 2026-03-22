@@ -22,7 +22,7 @@
     <script src="../_static/js/theme.js"></script>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Examples and plots" href="examples.html" />
+    <link rel="next" title="Conceptual overview" href="../concepts/overview.html" />
     <link rel="prev" title="Quick start" href="quickstart.html" /> 
 </head>
 
@@ -64,17 +64,9 @@
 <li class="toctree-l3"><a class="reference internal" href="#cell-parameters">Cell parameters</a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="#rgc-population-tab">RGC Population tab</a></li>
-<li class="toctree-l2"><a class="reference internal" href="#stats-and-export">Stats and export</a></li>
-</ul>
-</li>
-<li class="toctree-l1"><a class="reference internal" href="examples.html">Examples and plots</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="examples.html#heatmaps-same-code-as-the-app">Heatmaps (same code as the app)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="examples.html#ln-firing-nonlinearity-cell-parameters">LN firing nonlinearity (cell parameters)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="examples.html#synaptic-weight-sliders">Synaptic weight sliders</a></li>
-<li class="toctree-l2"><a class="reference internal" href="examples.html#stimulus-spectrum-coloring">Stimulus spectrum coloring</a></li>
-<li class="toctree-l2"><a class="reference internal" href="examples.html#regenerating-the-figures">Regenerating the figures</a></li>
-<li class="toctree-l2"><a class="reference internal" href="examples.html#suggested-workflows">Suggested workflows</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#stats-tab">Stats tab</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#plots-tab">Plots tab</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#export-tab">Export tab</a></li>
 </ul>
 </li>
 </ul>
@@ -145,7 +137,7 @@
              
   <section id="user-interface">
 <h1>User interface<a class="headerlink" href="#user-interface" title="Link to this heading"></a></h1>
-<p>This page describes the <strong>graphical interface</strong>: panels, views, and how they connect to the model. For math and biology, use the concepts pages (linked below). For runnable plots that mirror the heatmap and LN code, see <a class="reference internal" href="examples.html"><span class="doc">Examples and plots</span></a>.</p>
+<p>This page describes the <strong>graphical interface</strong>: panels, views, and how they connect to the model. For math and biology, use the concepts pages (linked below).</p>
 <section id="theory-cross-references">
 <h2>Theory cross-references<a class="headerlink" href="#theory-cross-references" title="Link to this heading"></a></h2>
 <table class="docutils align-default">
@@ -168,9 +160,6 @@
 <tr class="row-even"><td><p>Equations, symbols, parameter list</p></td>
 <td><p><a class="reference internal" href="../concepts/equations.html"><span class="doc">Model equations</span></a> (<a class="reference internal" href="../concepts/equations.html#parameters"><span class="std std-ref">Parameters (reference)</span></a>)</p></td>
 </tr>
-<tr class="row-odd"><td><p>Plots of colormaps, LN curve, weights (same code paths as the app)</p></td>
-<td><p><a class="reference internal" href="examples.html"><span class="doc">Examples and plots</span></a></p></td>
-</tr>
 </tbody>
 </table>
 </section>
@@ -178,9 +167,9 @@
 <h2>Layout<a class="headerlink" href="#layout" title="Link to this heading"></a></h2>
 <p>The window has three main areas:</p>
 <ul class="simple">
-<li><p><strong>Left panel</strong> — View mode, 2D layer selector (when applicable), stimulus controls, 3D camera and connectivity toggles when <strong>3D Stack</strong> is selected, viewport pick layer, and a bordered <strong>Circuit tuning</strong> block at the bottom (<strong>synaptic weights</strong> and <strong>cell parameters</strong>).</p></li>
+<li><p><strong>Left panel</strong> — View mode, 2D layer selector (when applicable), stimulus controls, and when <strong>3D Stack</strong> is selected: 3D camera, connectivity toggles, <strong>Inspection layer</strong> (coarse pick for viewport clicks), then <strong>Circuit tuning</strong> (<strong>synaptic weights</strong> and <strong>cell parameters</strong>) in the same scroll area.</p></li>
 <li><p><strong>Center</strong> — The main viewport: 2D heatmap, 2D all-layers mosaic, or the 3D Signal Flow Column (Vispy).</p></li>
-<li><p><strong>Right panel (tabs)</strong> — <strong>Stats</strong> (summary statistics, RGC sparkline and histogram, <strong>Export data</strong> buttons), <strong>Inspector</strong> (only when <strong>3D Stack</strong> is active; shows connectivity for the picked cell), <strong>RGC Population</strong> (42-type composition and optional modulation).</p></li>
+<li><p><strong>Right panel (tabs)</strong> — <strong>Stats</strong>, <strong>Plots</strong>, <strong>Export</strong> (below), and <strong>Inspector</strong> (only when <strong>3D Stack</strong> is active; connectivity for the picked cell).</p></li>
 </ul>
 </section>
 <section id="view-mode">
@@ -208,15 +197,23 @@
 </tr>
 </tbody>
 </table>
-<p><strong>Stats</strong> and export always refer to the running simulation state (same pipeline as in <a class="reference internal" href="../concepts/equations.html"><span class="doc">Model equations</span></a>), regardless of view mode.</p>
+<p><strong>Stats</strong>, <strong>Plots</strong>, and <strong>Export</strong> refer to the running simulation state (same pipeline as in <a class="reference internal" href="../concepts/equations.html"><span class="doc">Model equations</span></a>), regardless of view mode.</p>
+<p>Image stimuli use the <strong>rgbtolms</strong> RGB→spectrum mapping in the pipeline (no separate UI toggle).</p>
 </section>
 <section id="d-heatmap-mode">
 <h2>2D Heatmap mode<a class="headerlink" href="#d-heatmap-mode" title="Link to this heading"></a></h2>
 <ul class="simple">
 <li><p><strong>Layer</strong> combo selects which layer to display (Stimulus, Cones L/M/S, Horizontal, Bipolar ON, Amacrine, RGC Firing (L), etc.).</p></li>
-<li><p><strong>Heatmap colormap</strong> selects how scalar grids are painted: Firing (amber), Biphasic, Spectral, Diverging—see <a class="reference internal" href="examples.html"><span class="doc">Examples and plots</span></a> for side-by-side plots using <code class="docutils literal notranslate"><span class="pre">grid_to_rgba</span></code>.</p></li>
-<li><p>The heatmap uses a firing colormap (black → amber → white) for activation layers; <strong>Stimulus</strong> uses a spectral-derived RGB from the current stimulus spectrum (cone fundamentals in <a class="reference internal" href="../concepts/biology.html"><span class="doc">Biological background</span></a>).</p></li>
+<li><p><strong>Heatmap colormap</strong> selects how scalar grids are painted: Firing, Biphasic, Spectral, Diverging. These are the same modes as <code class="docutils literal notranslate"><span class="pre">grid_to_rgba</span></code> in <code class="docutils literal notranslate"><span class="pre">src/rendering/heatmap.py</span></code> (see figure below).</p></li>
+<li><p><strong>Stimulus</strong> uses a spectral-derived RGB from the current stimulus spectrum; other layers use the scalar colormaps as chosen.</p></li>
 </ul>
+<figure class="align-center" id="id1">
+<a class="reference internal image-reference" href="../_images/heatmap_colormaps.png"><img alt="../_images/heatmap_colormaps.png" src="../_images/heatmap_colormaps.png" style="width: 70%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">One synthetic 2D grid shown with the four colormap modes (<code class="docutils literal notranslate"><span class="pre">scripts/generate_doc_example_plots.py</span></code> calls <code class="docutils literal notranslate"><span class="pre">grid_to_rgba</span></code> like the viewer).</span><a class="headerlink" href="#id1" title="Link to this image"></a></p>
+</figcaption>
+</figure>
 </section>
 <section id="image-stimuli">
 <h2>Image stimuli<a class="headerlink" href="#image-stimuli" title="Link to this heading"></a></h2>
@@ -249,21 +246,122 @@
 </section>
 <section id="cell-parameters">
 <h3>Cell parameters<a class="headerlink" href="#cell-parameters" title="Link to this heading"></a></h3>
-<p>Tree nodes group <strong>midget RGC</strong>, <strong>parasol</strong>, <strong>horizontal</strong>, <strong>amacrine</strong>, and <strong>temporal</strong> settings. These map to <span class="math notranslate nohighlight">\(\sigma\)</span> scales, LN parameters (<span class="math notranslate nohighlight">\(r_{\max}\)</span>, slope, half-point), and <span class="math notranslate nohighlight">\(\tau\)</span> values in <a class="reference internal" href="../concepts/equations.html"><span class="doc">Model equations</span></a>. The <strong>LN</strong> family plots in <a class="reference internal" href="examples.html"><span class="doc">Examples and plots</span></a> show how <strong>r_max</strong> and <strong>slope</strong> change the output nonlinearity.</p>
+<p>Tree nodes group <strong>pathway</strong> and <strong>pool</strong> knobs (narrow vs wide RGC fields, bipolar pooling, horizontal feedback, narrow vs wide lateral inhibition), not fixed histological names. They map to <span class="math notranslate nohighlight">\(\sigma\)</span> scales, LN parameters (<span class="math notranslate nohighlight">\(r_{\max}\)</span>, slope, half-point), and <span class="math notranslate nohighlight">\(\tau\)</span> values in <a class="reference internal" href="../concepts/equations.html"><span class="doc">Model equations</span></a> (section 7 and the LN figure there).</p>
 </section>
 </section>
-<section id="rgc-population-tab">
-<h2>RGC Population tab<a class="headerlink" href="#rgc-population-tab" title="Link to this heading"></a></h2>
-<p>Optional <strong>population modulation</strong> skews effective time constants and gains from a 42-type composition model (<a class="reference internal" href="../concepts/biology.html"><span class="doc">Biological background</span></a>, cell-type proportions). When <strong>Enable population modulation</strong> is on, the pipeline uses the modulated path described in the code and tests; the tab also shows validation hints and an effective-RF preview.</p>
-</section>
-<section id="stats-and-export">
-<h2>Stats and export<a class="headerlink" href="#stats-and-export" title="Link to this heading"></a></h2>
-<p>The <strong>Stats</strong> tab lists mean firing, color-opponent summaries, per-layer lines, an RGC sparkline, and a histogram. Below <strong>Export data</strong>:</p>
+<section id="stats-tab">
+<h2>Stats tab<a class="headerlink" href="#stats-tab" title="Link to this heading"></a></h2>
+<p>The <strong>Stats</strong> tab reads the same arrays the pipeline writes each frame (see <code class="docutils literal notranslate"><span class="pre">_update_stats</span></code> in <code class="docutils literal notranslate"><span class="pre">src/gui/app.py</span></code>).</p>
 <ul class="simple">
-<li><p><strong>Save screenshot (PNG)</strong> — Captures the current viewport image.</p></li>
-<li><p><strong>Save layer stats (CSV)</strong> — Tabular summary of layers.</p></li>
-<li><p><strong>Save layer grids (.npy)</strong> — NumPy archive of layer arrays.</p></li>
+<li><p><strong>Mean FR per RGC type</strong> — Spatial mean of the <strong>midget ON (L)</strong> and <strong>parasol ON</strong> firing-rate grids (<code class="docutils literal notranslate"><span class="pre">fr_midget_on_L</span></code>, <code class="docutils literal notranslate"><span class="pre">fr_parasol_on</span></code>).</p></li>
+<li><p><strong>L−M and S−(L+M)</strong> — One summary line each: spatial mean of <code class="docutils literal notranslate"><span class="pre">lm_opponent</span></code> and <code class="docutils literal notranslate"><span class="pre">by_opponent</span></code> (same definitions as <a class="reference internal" href="../concepts/equations.html"><span class="doc">Model equations</span></a>, color-opponent section).</p></li>
+<li><p><strong>Per-layer</strong> — For Stimulus, Cones L/M/S, Horizontal, Bipolar, Amacrine, and RGC: mean, standard deviation, min, and max over the grid. Stimulus uses the spectrally summed mask (sum over wavelength); <strong>RGC</strong> here is the midget ON (L) firing grid.</p></li>
+<li><p><strong>RGC dynamics → RGC mean FR (last 100 ticks)</strong> — A line trace of the spatial mean of <code class="docutils literal notranslate"><span class="pre">fr_midget_on_L</span></code> each tick; the window keeps the last 100 samples so you can see drift or oscillation as the stimulus or state changes.</p></li>
+<li><p><strong>RGC FR histogram</strong> — Distribution of <strong>pixel</strong> values in the current <code class="docutils literal notranslate"><span class="pre">fr_midget_on_L</span></code> grid (default 16 bins over the data range; the UI updates this plot on a throttled cadence). Figures below use <strong>example data</strong> from a headless <code class="docutils literal notranslate"><span class="pre">pipeline.tick</span></code> run (same stimulus and logic as the app).</p></li>
 </ul>
+<figure class="align-center" id="id2">
+<a class="reference internal image-reference" href="../_images/gui_rgc_mean_fr_by_type.png"><img alt="../_images/gui_rgc_mean_fr_by_type.png" src="../_images/gui_rgc_mean_fr_by_type.png" style="width: 58%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Example: mean firing rate across the grid for each type (same quantities as the two lines at the top of the Stats tab).</span><a class="headerlink" href="#id2" title="Link to this image"></a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id3">
+<a class="reference internal image-reference" href="../_images/gui_rgc_mean_fr_sparkline.png"><img alt="../_images/gui_rgc_mean_fr_sparkline.png" src="../_images/gui_rgc_mean_fr_sparkline.png" style="width: 65%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Example: last 100 ticks of spatial mean <strong>midget ON (L)</strong> firing rate.</span><a class="headerlink" href="#id3" title="Link to this image"></a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id4">
+<a class="reference internal image-reference" href="../_images/gui_rgc_fr_histogram.png"><img alt="../_images/gui_rgc_fr_histogram.png" src="../_images/gui_rgc_fr_histogram.png" style="width: 65%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Example: histogram of <strong>midget ON (L)</strong> firing rates over space at one time (same layer as the 2D heatmap when that layer is selected).</span><a class="headerlink" href="#id4" title="Link to this image"></a></p>
+</figcaption>
+</figure>
+</section>
+<section id="plots-tab">
+<h2>Plots tab<a class="headerlink" href="#plots-tab" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p><strong>Cone mean drive (L / M / S)</strong> — Three bars: spatial mean of <code class="docutils literal notranslate"><span class="pre">cone_L</span></code>, <code class="docutils literal notranslate"><span class="pre">cone_M</span></code>, and <code class="docutils literal notranslate"><span class="pre">cone_S</span></code> (raw cone outputs after the spectral inner product, before the horizontal surround step).</p></li>
+<li><p><strong>Opponent means over time (last 80 ticks)</strong> — Two traces: spatial mean of <code class="docutils literal notranslate"><span class="pre">lm_opponent</span></code> and <code class="docutils literal notranslate"><span class="pre">by_opponent</span></code> each tick, keeping the last 80 samples. <strong>L−M</strong> is built from midget ON L and M firing grids; <strong>S−(L+M)</strong> from effective cone outputs (see <a class="reference internal" href="../concepts/equations.html"><span class="doc">Model equations</span></a>).</p></li>
+</ul>
+<figure class="align-center" id="id5">
+<a class="reference internal image-reference" href="../_images/gui_cone_mean_drive.png"><img alt="../_images/gui_cone_mean_drive.png" src="../_images/gui_cone_mean_drive.png" style="width: 52%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Example: cone mean drive bars (same three means as the Plots tab).</span><a class="headerlink" href="#id5" title="Link to this image"></a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id6">
+<a class="reference internal image-reference" href="../_images/gui_opponent_means_timeseries.png"><img alt="../_images/gui_opponent_means_timeseries.png" src="../_images/gui_opponent_means_timeseries.png" style="width: 65%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Example: opponent means over the last 80 recorded ticks.</span><a class="headerlink" href="#id6" title="Link to this image"></a></p>
+</figcaption>
+</figure>
+</section>
+<section id="export-tab">
+<h2>Export tab<a class="headerlink" href="#export-tab" title="Link to this heading"></a></h2>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 28.0%" />
+<col style="width: 72.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Control</p></th>
+<th class="head"><p>Output</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>Save screenshot (PNG)</strong></p></td>
+<td><p>Captures the <strong>current viewport</strong> RGBA buffer (what you see in the center panel) as a PNG via <code class="docutils literal notranslate"><span class="pre">export_screenshot_png</span></code> in <code class="docutils literal notranslate"><span class="pre">src/gui/panels/data_export.py</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>Save layer stats (CSV)</strong></p></td>
+<td><p>One CSV row per named layer: <strong>mean</strong>, <strong>min</strong>, <strong>max</strong>, <strong>std</strong> over the grid. Layers: <code class="docutils literal notranslate"><span class="pre">cone_L</span></code>, <code class="docutils literal notranslate"><span class="pre">cone_M</span></code>, <code class="docutils literal notranslate"><span class="pre">cone_S</span></code>, <code class="docutils literal notranslate"><span class="pre">h_activation</span></code>, <code class="docutils literal notranslate"><span class="pre">bp_midget_on_L</span></code>, <code class="docutils literal notranslate"><span class="pre">bp_diffuse_on</span></code>, <code class="docutils literal notranslate"><span class="pre">amacrine_aii</span></code>, <code class="docutils literal notranslate"><span class="pre">fr_midget_on_L</span></code>, <code class="docutils literal notranslate"><span class="pre">fr_parasol_on</span></code>, <code class="docutils literal notranslate"><span class="pre">lm_opponent</span></code>, <code class="docutils literal notranslate"><span class="pre">by_opponent</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>Save layer grids (.npy)</strong></p></td>
+<td><p>Writes one <code class="docutils literal notranslate"><span class="pre">.npy</span></code> file per array into the <strong>directory</strong> you choose. Files match <code class="docutils literal notranslate"><span class="pre">SimState</span></code> field names (full 2D grids or stimulus spectrum <code class="docutils literal notranslate"><span class="pre">(H,</span> <span class="pre">W,</span> <span class="pre">L)</span></code>). See the list in <code class="docutils literal notranslate"><span class="pre">export_layer_grids_npy</span></code> in <code class="docutils literal notranslate"><span class="pre">data_export.py</span></code>.</p></td>
+</tr>
+</tbody>
+</table>
+<p>Arrays written by <strong>Save layer grids</strong> (when present on <code class="docutils literal notranslate"><span class="pre">SimState</span></code>):</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 22.0%" />
+<col style="width: 78.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>File</p></th>
+<th class="head"><p>Role</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">stimulus_spectrum.npy</span></code></p></td>
+<td><p>Spectral radiance cube <span class="math notranslate nohighlight">\((H, W, L_\lambda)\)</span>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">cone_L.npy</span></code>, <code class="docutils literal notranslate"><span class="pre">cone_M.npy</span></code>, <code class="docutils literal notranslate"><span class="pre">cone_S.npy</span></code></p></td>
+<td><p>Raw cone responses.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">cone_L_eff.npy</span></code>, <code class="docutils literal notranslate"><span class="pre">cone_M_eff.npy</span></code>, <code class="docutils literal notranslate"><span class="pre">cone_S_eff.npy</span></code></p></td>
+<td><p>Cone outputs after horizontal feedback.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">h_activation.npy</span></code></p></td>
+<td><p>Horizontal cell pool.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">bp_*.npy</span></code>, <code class="docutils literal notranslate"><span class="pre">amacrine_*.npy</span></code></p></td>
+<td><p>Bipolar and amacrine layers (ON/OFF and pathways as named in code).</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">fr_*.npy</span></code></p></td>
+<td><p>RGC firing rates (midget / parasol, ON / OFF).</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">lm_opponent.npy</span></code>, <code class="docutils literal notranslate"><span class="pre">by_opponent.npy</span></code></p></td>
+<td><p>Opponent maps (same as in <a class="reference internal" href="../concepts/equations.html"><span class="doc">Model equations</span></a>).</p></td>
+</tr>
+</tbody>
+</table>
+<p>Figures on this page are generated by <code class="docutils literal notranslate"><span class="pre">scripts/generate_doc_example_plots.py</span></code> (<code class="docutils literal notranslate"><span class="pre">plot_gui_panels_from_pipeline</span></code> uses <code class="docutils literal notranslate"><span class="pre">pipeline.tick</span></code> with a drifting full-field grating so the time traces are non-trivial).</p>
 <p>For GitHub Pages deployment of this documentation, see <a class="reference internal" href="deploy_github_pages.html"><span class="doc">Documentation site</span></a>.</p>
 </section>
 </section>
@@ -273,7 +371,7 @@
           </div>
           <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
         <a href="quickstart.html" class="btn btn-neutral float-left" title="Quick start" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
-        <a href="examples.html" class="btn btn-neutral float-right" title="Examples and plots" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+        <a href="../concepts/overview.html" class="btn btn-neutral float-right" title="Conceptual overview" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
     </div>
 
   <hr/>

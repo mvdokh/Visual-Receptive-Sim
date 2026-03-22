@@ -1,9 +1,11 @@
 RGC Circuit Simulator
 =====================
 
-A retinal ganglion cell (RGC) circuit simulator: **stimulus → cones → horizontals → bipolars → amacrines → RGCs**. Vectorized NumPy/SciPy pipeline, ModernGL 3D rendering, and Dear PyGui.
+This project is a **retinal ganglion cell (RGC) circuit simulator**: light enters as a spectral field on a patch of retina, and the code walks it through cones, horizontal feedback, bipolars, amacrines, and finally RGC generators and firing rates. The documentation is organized around that pipeline so you can read the math next to the stage it describes, and use the UI when you want the same quantities as sliders and layer views.
 
-**Start here:** the :doc:`user guide <user_guide/quickstart>` and :doc:`user_guide/interface` explain how to run the app and what each control does. The **concepts** sections below cover biology, signal flow, and equations—the same ideas the UI exposes as sliders, weights, and layer views.
+Implementation: vectorized NumPy/SciPy pipeline, ModernGL 3D rendering, Dear PyGui.
+
+**Start here:** :doc:`user_guide/quickstart` (run the app) and :doc:`user_guide/interface` (panels and controls). Under **Concepts**, :doc:`concepts/overview` sketches signal flow, :doc:`concepts/biology` gives retina context, and :doc:`concepts/equations` states the model in symbols.
 
 .. toctree::
    :maxdepth: 2
@@ -11,7 +13,6 @@ A retinal ganglion cell (RGC) circuit simulator: **stimulus → cones → horizo
 
    user_guide/quickstart
    user_guide/interface
-   user_guide/examples
 
 .. toctree::
    :maxdepth: 2

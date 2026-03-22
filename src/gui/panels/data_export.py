@@ -28,7 +28,7 @@ def export_layer_grids_csv(state: "SimState", filepath: Path) -> None:
     for name in [
         "cone_L", "cone_M", "cone_S", "h_activation",
         "bp_midget_on_L", "bp_diffuse_on", "amacrine_aii",
-        "fr_midget_on_L", "fr_parasol_on", "lm_opponent",
+        "fr_midget_on_L", "fr_parasol_on", "lm_opponent", "by_opponent",
     ]:
         arr = getattr(state, name, None)
         if arr is not None:

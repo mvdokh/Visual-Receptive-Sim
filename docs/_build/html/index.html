@@ -61,17 +61,9 @@
 <li class="toctree-l3"><a class="reference internal" href="user_guide/interface.html#cell-parameters">Cell parameters</a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#rgc-population-tab">RGC Population tab</a></li>
-<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#stats-and-export">Stats and export</a></li>
-</ul>
-</li>
-<li class="toctree-l1"><a class="reference internal" href="user_guide/examples.html">Examples and plots</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#heatmaps-same-code-as-the-app">Heatmaps (same code as the app)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#ln-firing-nonlinearity-cell-parameters">LN firing nonlinearity (cell parameters)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#cone-fundamentals-image-bases-and-monochromatic-sweep">Cone fundamentals, image bases, and monochromatic sweep</a></li>
-<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#connectivity-weight-sensitivity-reduced-1d-chain">Connectivity weight sensitivity (reduced 1D chain)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#regenerating-the-figures">Regenerating the figures</a></li>
-<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#suggested-workflows">Suggested workflows</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#stats-tab">Stats tab</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#plots-tab">Plots tab</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#export-tab">Export tab</a></li>
 </ul>
 </li>
 </ul>
@@ -142,8 +134,9 @@
              
   <section id="rgc-circuit-simulator">
 <h1>RGC Circuit Simulator<a class="headerlink" href="#rgc-circuit-simulator" title="Link to this heading"></a></h1>
-<p>A retinal ganglion cell (RGC) circuit simulator: <strong>stimulus → cones → horizontals → bipolars → amacrines → RGCs</strong>. Vectorized NumPy/SciPy pipeline, ModernGL 3D rendering, and Dear PyGui.</p>
-<p><strong>Start here:</strong> the <a class="reference internal" href="user_guide/quickstart.html"><span class="doc">user guide</span></a> and <a class="reference internal" href="user_guide/interface.html"><span class="doc">User interface</span></a> explain how to run the app and what each control does. The <strong>concepts</strong> sections below cover biology, signal flow, and equations—the same ideas the UI exposes as sliders, weights, and layer views.</p>
+<p>This project is a <strong>retinal ganglion cell (RGC) circuit simulator</strong>: light enters as a spectral field on a patch of retina, and the code walks it through cones, horizontal feedback, bipolars, amacrines, and finally RGC generators and firing rates. The documentation is organized around that pipeline so you can read the math next to the stage it describes, and use the UI when you want the same quantities as sliders and layer views.</p>
+<p>Implementation: vectorized NumPy/SciPy pipeline, ModernGL 3D rendering, Dear PyGui.</p>
+<p><strong>Start here:</strong> <a class="reference internal" href="user_guide/quickstart.html"><span class="doc">Quick start</span></a> (run the app) and <a class="reference internal" href="user_guide/interface.html"><span class="doc">User interface</span></a> (panels and controls). Under <strong>Concepts</strong>, <a class="reference internal" href="concepts/overview.html"><span class="doc">Conceptual overview</span></a> sketches signal flow, <a class="reference internal" href="concepts/biology.html"><span class="doc">Biological background</span></a> gives retina context, and <a class="reference internal" href="concepts/equations.html"><span class="doc">Model equations</span></a> states the model in symbols.</p>
 <div class="toctree-wrapper compound">
 <p class="caption" role="heading"><span class="caption-text">User guide</span></p>
 <ul>
@@ -160,17 +153,9 @@
 <li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#image-stimuli">Image stimuli</a></li>
 <li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#d-stack-signal-flow-column-mode">3D Stack (Signal Flow Column) mode</a></li>
 <li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#circuit-tuning-left-panel-bottom">Circuit tuning (left panel, bottom)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#rgc-population-tab">RGC Population tab</a></li>
-<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#stats-and-export">Stats and export</a></li>
-</ul>
-</li>
-<li class="toctree-l1"><a class="reference internal" href="user_guide/examples.html">Examples and plots</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#heatmaps-same-code-as-the-app">Heatmaps (same code as the app)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#ln-firing-nonlinearity-cell-parameters">LN firing nonlinearity (cell parameters)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#cone-fundamentals-image-bases-and-monochromatic-sweep">Cone fundamentals, image bases, and monochromatic sweep</a></li>
-<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#connectivity-weight-sensitivity-reduced-1d-chain">Connectivity weight sensitivity (reduced 1D chain)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#regenerating-the-figures">Regenerating the figures</a></li>
-<li class="toctree-l2"><a class="reference internal" href="user_guide/examples.html#suggested-workflows">Suggested workflows</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#stats-tab">Stats tab</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#plots-tab">Plots tab</a></li>
+<li class="toctree-l2"><a class="reference internal" href="user_guide/interface.html#export-tab">Export tab</a></li>
 </ul>
 </li>
 </ul>

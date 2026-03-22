@@ -29,29 +29,25 @@ In the code this is a discrete dot product over the wavelength axis (einsum).
 
 .. figure:: ../_static/examples/cone_fundamentals_and_basis.png
    :align: center
-   :width: 100%
+   :width: 72%
 
    **Top:** normalized L/M/S fundamentals :math:`\bar{l},\bar{m},\bar{s}` on the simulator wavelength grid (``SpectralConfig``; CSV in ``data/cone_fundamentals.csv`` when present).
-   **Middle:** Gaussian RGB basis spectra for **image** stimuli (same construction as ``src/simulation/stimulus/spectral.py``, legacy mapping).
-   **Bottom:** cone responses from a discrete inner product when a narrowband stimulus’s peak :math:`\lambda` scans—same inner-product form as the code, illustrating the integrals above.
+   **Middle:** optional Gaussian RGB basis used when image mapping is not **rgbtolms** (see ``build_stimulus_spectrum`` / ``image`` branch in ``src/simulation/stimulus/spectral.py``).
+   **Bottom:** cone outputs from the discrete inner product when a narrowband stimulus’s peak :math:`\lambda` scans.
 
 Pixel-image stimuli
 ~~~~~~~~~~~~~~~~~~~
 
 For analytic stimuli (spot, bar, grating, etc.), :math:`S(x,y,\lambda)` is factorized into a spatial mask :math:`M(x,y)` and a narrowband spectral profile centered at a
-user-chosen wavelength (with an overall intensity gain). For **image** stimuli, the simulator starts from an RGB pixel image :math:`I(x,y) = (R,G,B)` and constructs
-an approximate spectrum per pixel before applying the cone fundamentals.
+user-chosen wavelength (with an overall intensity gain). For **image** stimuli, each pixel’s :math:`(R,G,B)` is turned into a per-pixel spectrum before the cone inner product.
 
-Concretely, three Gaussian "basis" spectra :math:`b_R(\lambda), b_G(\lambda), b_B(\lambda)` are defined, centered at long-, middle-, and short-wave wavelengths
-(:math:`\approx 610, 540, 450\,\mathrm{nm}`), normalized so that :math:`\max_\lambda b_\cdot(\lambda) = 1`. Then:
+The default path (**rgbtolms**) uses tabulated monitor primaries and resampling onto the simulator grid (``build_emission_from_rgb`` / ``resample_spd_to_spectral_grid`` in ``src/simulation/rgb_mapping.py`` and ``build_stimulus_spectrum`` in ``src/simulation/stimulus/spectral.py``). An older **Gaussian-basis** option is still in the code: three spectra :math:`b_R, b_G, b_B` centered near :math:`610, 540, 450\,\mathrm{nm}`, each normalized to unit peak, with
 
 .. math::
 
    S(x,y,\lambda) \approx R(x,y)\,b_R(\lambda) + G(x,y)\,b_G(\lambda) + B(x,y)\,b_B(\lambda),
 
-with :math:`R,G,B \in [0,1]` the normalized pixel values. A global **Intensity** parameter :math:`\alpha \in [0,1]` multiplies this spectrum,
-so the effective stimulus is :math:`\alpha\,S(x,y,\lambda)`. This preserves pixel hue (up to the three-band approximation) so that the cone fundamentals
-can bin the image into L/M/S responses in a color-consistent way.
+and :math:`R,G,B \in [0,1]`. The middle panel of the figure above shows that basis. A global **Intensity** :math:`\alpha \in [0,1]` scales the constructed spectrum.
 
 ---
 
@@ -141,7 +137,13 @@ Sigmoid nonlinearity maps generator :math:`G` to firing rate :math:`R` (sp/s):
 .. math::
    R = \frac{R_{\max}}{1 + e^{-\beta\,(G - G_{1/2})}}.
 
-Parameters: :math:`R_{\max}` (max rate), :math:`G_{1/2}` (half-max input), :math:`\beta` (slope). In the code these are ``r_max``, ``x_half``, ``slope``.
+Parameters: :math:`R_{\max}` (max rate), :math:`G_{1/2}` (half-max input), :math:`\beta` (slope). In the code these are ``r_max``, ``x_half``, ``slope`` (see ``sigmoid_ln`` in ``src/simulation/fast_layers.py`` and use in ``pipeline.py``).
+
+.. figure:: ../_static/examples/ln_sigmoid_family.png
+   :align: center
+   :width: 75%
+
+   Same functional form as above: baseline curve, varying :math:`R_{\max}`, and varying slope :math:`\beta`. Generated with ``scripts/generate_doc_example_plots.py``.
 
 ---
 
@@ -187,6 +189,6 @@ Connectivity weights :math:`w_{C\to H}, w_{C\to B}, w_{H\to C}, w_{B\to A}, w_{A
 
 .. figure:: ../_static/examples/connectivity_weight_sensitivity.png
    :align: center
-   :width: 100%
+   :width: 78%
 
-   Each panel varies one weight on the horizontal axis with the other five held at 1; the vertical axis is a **mean** output from a **reduced 1D chain** that uses the same multiplicative placement of each :math:`w` as the full 2D pipeline (LN at the end). This is a qualitative sensitivity plot for the symbols in the preceding sections—not a substitute for the full simulation, but it shows how each weight enters the cascade. See :doc:`/user_guide/examples` for the generator script.
+   Each panel varies one weight on the horizontal axis with the other five held at 1; the vertical axis is a **mean** output from a **reduced 1D chain** that uses the same multiplicative placement of each :math:`w` as the full 2D pipeline (LN at the end). Qualitative sensitivity only. Figures: ``python scripts/generate_doc_example_plots.py``.

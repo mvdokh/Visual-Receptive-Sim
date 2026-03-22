@@ -23,7 +23,7 @@
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
     <link rel="next" title="Biological background" href="biology.html" />
-    <link rel="prev" title="Examples and plots" href="../user_guide/examples.html" /> 
+    <link rel="prev" title="User interface" href="../user_guide/interface.html" /> 
 </head>
 
 <body class="wy-body-for-nav"> 
@@ -64,17 +64,7 @@
 <li class="toctree-l3"><a class="reference internal" href="../user_guide/interface.html#cell-parameters">Cell parameters</a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#rgc-population-tab">RGC Population tab</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#stats-and-export">Stats and export</a></li>
-</ul>
-</li>
-<li class="toctree-l1"><a class="reference internal" href="../user_guide/examples.html">Examples and plots</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#heatmaps-same-code-as-the-app">Heatmaps (same code as the app)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#ln-firing-nonlinearity-cell-parameters">LN firing nonlinearity (cell parameters)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#synaptic-weight-sliders">Synaptic weight sliders</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#stimulus-spectrum-coloring">Stimulus spectrum coloring</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#regenerating-the-figures">Regenerating the figures</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#suggested-workflows">Suggested workflows</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#stats-plots-and-export">Stats, plots, and export</a></li>
 </ul>
 </li>
 </ul>
@@ -145,10 +135,10 @@
              
   <section id="conceptual-overview">
 <h1>Conceptual overview<a class="headerlink" href="#conceptual-overview" title="Link to this heading"></a></h1>
-<p>This page describes the <strong>model and concepts</strong> behind the RGC Circuit Simulator, without reference to the graphical interface.</p>
+<p>This page is the <strong>model without the window</strong>: what is computed at each stage, in order. The <a class="reference internal" href="equations.html"><span class="doc">Model equations</span></a> page names the same operations in math; <a class="reference internal" href="../user_guide/interface.html"><span class="doc">User interface</span></a> maps them to controls and views.</p>
 <section id="signal-flow">
 <h2>Signal flow<a class="headerlink" href="#signal-flow" title="Link to this heading"></a></h2>
-<p>The simulator implements a feedforward (with one feedback) cascade from light to firing rates:</p>
+<p>Light to firing rate is a feedforward chain with horizontal feedback at the cones:</p>
 <ol class="arabic simple">
 <li><p><strong>Stimulus</strong> — A spectral radiance grid <span class="math notranslate nohighlight">\(S(x, y, \lambda)\)</span> over a retinal patch (e.g. 1° × 1°), sampled in wavelength (e.g. 380–700 nm).</p></li>
 <li><p><strong>Cones</strong> — L, M, S photoreceptor responses via spectral sensitivity (e.g. Stockman &amp; Sharpe 2000 fundamentals), giving <span class="math notranslate nohighlight">\(C_L, C_M, C_S\)</span> at each location.</p></li>
@@ -170,11 +160,7 @@
 <li><p><strong>Spectral</strong>: Monochromatic or multi-wavelength stimuli via cone fundamentals; no explicit opponent wiring before RGCs beyond L−M at the output.</p></li>
 <li><p><strong>Temporal</strong>: Discrete time steps; RC smoothing approximates low-pass filtering at each layer.</p></li>
 </ul>
-<p>For full mathematical detail, see <a class="reference internal" href="equations.html"><span class="doc">Model equations</span></a>; for biological context, see <a class="reference internal" href="biology.html"><span class="doc">Biological background</span></a>.</p>
-<div class="admonition seealso">
-<p class="admonition-title">See also</p>
-<p><strong>Application</strong> — <a class="reference internal" href="../user_guide/interface.html"><span class="doc">User interface</span></a> maps panels and controls to these stages; <a class="reference internal" href="../user_guide/examples.html"><span class="doc">Examples and plots</span></a> shows heatmap and LN plots using the same rendering code as the 2D viewer.</p>
-</div>
+<p>For symbols and parameters, see <a class="reference internal" href="equations.html"><span class="doc">Model equations</span></a>; for biological context, see <a class="reference internal" href="biology.html"><span class="doc">Biological background</span></a>.</p>
 </section>
 </section>
 
@@ -182,7 +168,7 @@
            </div>
           </div>
           <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
-        <a href="../user_guide/examples.html" class="btn btn-neutral float-left" title="Examples and plots" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="../user_guide/interface.html" class="btn btn-neutral float-left" title="User interface" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
         <a href="biology.html" class="btn btn-neutral float-right" title="Biological background" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
     </div>
 

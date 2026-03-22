@@ -1,12 +1,12 @@
 Conceptual overview
 ===================
 
-This page describes the **model and concepts** behind the RGC Circuit Simulator, without reference to the graphical interface.
+This page is the **model without the window**: what is computed at each stage, in order. The :doc:`equations` page names the same operations in math; :doc:`/user_guide/interface` maps them to controls and views.
 
 Signal flow
 -----------
 
-The simulator implements a feedforward (with one feedback) cascade from light to firing rates:
+Light to firing rate is a feedforward chain with horizontal feedback at the cones:
 
 1. **Stimulus** — A spectral radiance grid :math:`S(x, y, \lambda)` over a retinal patch (e.g. 1° × 1°), sampled in wavelength (e.g. 380–700 nm).
 
@@ -37,8 +37,4 @@ Scope
 - **Spectral**: Monochromatic or multi-wavelength stimuli via cone fundamentals; no explicit opponent wiring before RGCs beyond L−M at the output.
 - **Temporal**: Discrete time steps; RC smoothing approximates low-pass filtering at each layer.
 
-For full mathematical detail, see :doc:`equations`; for biological context, see :doc:`biology`.
-
-.. seealso::
-
-   **Application** — :doc:`/user_guide/interface` maps panels and controls to these stages; :doc:`/user_guide/examples` shows heatmap and LN plots using the same rendering code as the 2D viewer.
+For symbols and parameters, see :doc:`equations`; for biological context, see :doc:`biology`.

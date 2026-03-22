@@ -64,17 +64,9 @@
 <li class="toctree-l3"><a class="reference internal" href="../user_guide/interface.html#cell-parameters">Cell parameters</a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#rgc-population-tab">RGC Population tab</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#stats-and-export">Stats and export</a></li>
-</ul>
-</li>
-<li class="toctree-l1"><a class="reference internal" href="../user_guide/examples.html">Examples and plots</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#heatmaps-same-code-as-the-app">Heatmaps (same code as the app)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#ln-firing-nonlinearity-cell-parameters">LN firing nonlinearity (cell parameters)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#cone-fundamentals-image-bases-and-monochromatic-sweep">Cone fundamentals, image bases, and monochromatic sweep</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#connectivity-weight-sensitivity-reduced-1d-chain">Connectivity weight sensitivity (reduced 1D chain)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#regenerating-the-figures">Regenerating the figures</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user_guide/examples.html#suggested-workflows">Suggested workflows</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#stats-tab">Stats tab</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#plots-tab">Plots tab</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user_guide/interface.html#export-tab">Export tab</a></li>
 </ul>
 </li>
 </ul>
@@ -167,26 +159,22 @@ C_M(x,y) = \int S(x,y,\lambda)\,\bar{m}(\lambda)\,d\lambda,\quad
 C_S(x,y) = \int S(x,y,\lambda)\,\bar{s}(\lambda)\,d\lambda.\]</div>
 <p>In the code this is a discrete dot product over the wavelength axis (einsum).</p>
 <figure class="align-center" id="id1">
-<a class="reference internal image-reference" href="../_images/cone_fundamentals_and_basis.png"><img alt="../_images/cone_fundamentals_and_basis.png" src="../_images/cone_fundamentals_and_basis.png" style="width: 100%;" />
+<a class="reference internal image-reference" href="../_images/cone_fundamentals_and_basis.png"><img alt="../_images/cone_fundamentals_and_basis.png" src="../_images/cone_fundamentals_and_basis.png" style="width: 72%;" />
 </a>
 <figcaption>
 <p><span class="caption-text"><strong>Top:</strong> normalized L/M/S fundamentals <span class="math notranslate nohighlight">\(\bar{l},\bar{m},\bar{s}\)</span> on the simulator wavelength grid (<code class="docutils literal notranslate"><span class="pre">SpectralConfig</span></code>; CSV in <code class="docutils literal notranslate"><span class="pre">data/cone_fundamentals.csv</span></code> when present).
-<strong>Middle:</strong> Gaussian RGB basis spectra for <strong>image</strong> stimuli (same construction as <code class="docutils literal notranslate"><span class="pre">src/simulation/stimulus/spectral.py</span></code>, legacy mapping).
-<strong>Bottom:</strong> cone responses from a discrete inner product when a narrowband stimulus’s peak <span class="math notranslate nohighlight">\(\lambda\)</span> scans—same inner-product form as the code, illustrating the integrals above.</span><a class="headerlink" href="#id1" title="Link to this image"></a></p>
+<strong>Middle:</strong> optional Gaussian RGB basis used when image mapping is not <strong>rgbtolms</strong> (see <code class="docutils literal notranslate"><span class="pre">build_stimulus_spectrum</span></code> / <code class="docutils literal notranslate"><span class="pre">image</span></code> branch in <code class="docutils literal notranslate"><span class="pre">src/simulation/stimulus/spectral.py</span></code>).
+<strong>Bottom:</strong> cone outputs from the discrete inner product when a narrowband stimulus’s peak <span class="math notranslate nohighlight">\(\lambda\)</span> scans.</span><a class="headerlink" href="#id1" title="Link to this image"></a></p>
 </figcaption>
 </figure>
 <section id="pixel-image-stimuli">
 <h3>Pixel-image stimuli<a class="headerlink" href="#pixel-image-stimuli" title="Link to this heading"></a></h3>
 <p>For analytic stimuli (spot, bar, grating, etc.), <span class="math notranslate nohighlight">\(S(x,y,\lambda)\)</span> is factorized into a spatial mask <span class="math notranslate nohighlight">\(M(x,y)\)</span> and a narrowband spectral profile centered at a
-user-chosen wavelength (with an overall intensity gain). For <strong>image</strong> stimuli, the simulator starts from an RGB pixel image <span class="math notranslate nohighlight">\(I(x,y) = (R,G,B)\)</span> and constructs
-an approximate spectrum per pixel before applying the cone fundamentals.</p>
-<p>Concretely, three Gaussian “basis” spectra <span class="math notranslate nohighlight">\(b_R(\lambda), b_G(\lambda), b_B(\lambda)\)</span> are defined, centered at long-, middle-, and short-wave wavelengths
-(<span class="math notranslate nohighlight">\(\approx 610, 540, 450\,\mathrm{nm}\)</span>), normalized so that <span class="math notranslate nohighlight">\(\max_\lambda b_\cdot(\lambda) = 1\)</span>. Then:</p>
+user-chosen wavelength (with an overall intensity gain). For <strong>image</strong> stimuli, each pixel’s <span class="math notranslate nohighlight">\((R,G,B)\)</span> is turned into a per-pixel spectrum before the cone inner product.</p>
+<p>The default path (<strong>rgbtolms</strong>) uses tabulated monitor primaries and resampling onto the simulator grid (<code class="docutils literal notranslate"><span class="pre">build_emission_from_rgb</span></code> / <code class="docutils literal notranslate"><span class="pre">resample_spd_to_spectral_grid</span></code> in <code class="docutils literal notranslate"><span class="pre">src/simulation/rgb_mapping.py</span></code> and <code class="docutils literal notranslate"><span class="pre">build_stimulus_spectrum</span></code> in <code class="docutils literal notranslate"><span class="pre">src/simulation/stimulus/spectral.py</span></code>). An older <strong>Gaussian-basis</strong> option is still in the code: three spectra <span class="math notranslate nohighlight">\(b_R, b_G, b_B\)</span> centered near <span class="math notranslate nohighlight">\(610, 540, 450\,\mathrm{nm}\)</span>, each normalized to unit peak, with</p>
 <div class="math notranslate nohighlight">
 \[S(x,y,\lambda) \approx R(x,y)\,b_R(\lambda) + G(x,y)\,b_G(\lambda) + B(x,y)\,b_B(\lambda),\]</div>
-<p>with <span class="math notranslate nohighlight">\(R,G,B \in [0,1]\)</span> the normalized pixel values. A global <strong>Intensity</strong> parameter <span class="math notranslate nohighlight">\(\alpha \in [0,1]\)</span> multiplies this spectrum,
-so the effective stimulus is <span class="math notranslate nohighlight">\(\alpha\,S(x,y,\lambda)\)</span>. This preserves pixel hue (up to the three-band approximation) so that the cone fundamentals
-can bin the image into L/M/S responses in a color-consistent way.</p>
+<p>and <span class="math notranslate nohighlight">\(R,G,B \in [0,1]\)</span>. The middle panel of the figure above shows that basis. A global <strong>Intensity</strong> <span class="math notranslate nohighlight">\(\alpha \in [0,1]\)</span> scales the constructed spectrum.</p>
 <p>—</p>
 </section>
 </section>
@@ -249,7 +237,14 @@ A_{\mathrm{wide}} = \bigl( C^{\mathrm{eff}}_L + C^{\mathrm{eff}}_M \bigr) * G_{\
 <p>Sigmoid nonlinearity maps generator <span class="math notranslate nohighlight">\(G\)</span> to firing rate <span class="math notranslate nohighlight">\(R\)</span> (sp/s):</p>
 <div class="math notranslate nohighlight">
 \[R = \frac{R_{\max}}{1 + e^{-\beta\,(G - G_{1/2})}}.\]</div>
-<p>Parameters: <span class="math notranslate nohighlight">\(R_{\max}\)</span> (max rate), <span class="math notranslate nohighlight">\(G_{1/2}\)</span> (half-max input), <span class="math notranslate nohighlight">\(\beta\)</span> (slope). In the code these are <code class="docutils literal notranslate"><span class="pre">r_max</span></code>, <code class="docutils literal notranslate"><span class="pre">x_half</span></code>, <code class="docutils literal notranslate"><span class="pre">slope</span></code>.</p>
+<p>Parameters: <span class="math notranslate nohighlight">\(R_{\max}\)</span> (max rate), <span class="math notranslate nohighlight">\(G_{1/2}\)</span> (half-max input), <span class="math notranslate nohighlight">\(\beta\)</span> (slope). In the code these are <code class="docutils literal notranslate"><span class="pre">r_max</span></code>, <code class="docutils literal notranslate"><span class="pre">x_half</span></code>, <code class="docutils literal notranslate"><span class="pre">slope</span></code> (see <code class="docutils literal notranslate"><span class="pre">sigmoid_ln</span></code> in <code class="docutils literal notranslate"><span class="pre">src/simulation/fast_layers.py</span></code> and use in <code class="docutils literal notranslate"><span class="pre">pipeline.py</span></code>).</p>
+<figure class="align-center" id="id2">
+<a class="reference internal image-reference" href="../_images/ln_sigmoid_family.png"><img alt="../_images/ln_sigmoid_family.png" src="../_images/ln_sigmoid_family.png" style="width: 75%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Same functional form as above: baseline curve, varying <span class="math notranslate nohighlight">\(R_{\max}\)</span>, and varying slope <span class="math notranslate nohighlight">\(\beta\)</span>. Generated with <code class="docutils literal notranslate"><span class="pre">scripts/generate_doc_example_plots.py</span></code>.</span><a class="headerlink" href="#id2" title="Link to this image"></a></p>
+</figcaption>
+</figure>
 <p>—</p>
 </section>
 <section id="color-opponent-signals">
@@ -282,11 +277,11 @@ X_{t+1} = X_t + \alpha\,(X^{\mathrm{raw}}_{t+1} - X_t).\]</div>
 <li><p><strong>Temporal</strong>: <span class="math notranslate nohighlight">\(\tau\)</span> per layer (cone, horizontal, bipolar, amacrine, RGC).</p></li>
 </ul>
 <p>Connectivity weights <span class="math notranslate nohighlight">\(w_{C\to H}, w_{C\to B}, w_{H\to C}, w_{B\to A}, w_{A\to B}, w_{B\to R}\)</span> scale the corresponding pathways (default 1); they are used both in the pipeline and in the 3D connectivity visualization.</p>
-<figure class="align-center" id="id2">
-<a class="reference internal image-reference" href="../_images/connectivity_weight_sensitivity.png"><img alt="../_images/connectivity_weight_sensitivity.png" src="../_images/connectivity_weight_sensitivity.png" style="width: 100%;" />
+<figure class="align-center" id="id3">
+<a class="reference internal image-reference" href="../_images/connectivity_weight_sensitivity.png"><img alt="../_images/connectivity_weight_sensitivity.png" src="../_images/connectivity_weight_sensitivity.png" style="width: 78%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Each panel varies one weight on the horizontal axis with the other five held at 1; the vertical axis is a <strong>mean</strong> output from a <strong>reduced 1D chain</strong> that uses the same multiplicative placement of each <span class="math notranslate nohighlight">\(w\)</span> as the full 2D pipeline (LN at the end). This is a qualitative sensitivity plot for the symbols in the preceding sections—not a substitute for the full simulation, but it shows how each weight enters the cascade. See <a class="reference internal" href="../user_guide/examples.html"><span class="doc">Examples and plots</span></a> for the generator script.</span><a class="headerlink" href="#id2" title="Link to this image"></a></p>
+<p><span class="caption-text">Each panel varies one weight on the horizontal axis with the other five held at 1; the vertical axis is a <strong>mean</strong> output from a <strong>reduced 1D chain</strong> that uses the same multiplicative placement of each <span class="math notranslate nohighlight">\(w\)</span> as the full 2D pipeline (LN at the end). Qualitative sensitivity only. Figures: <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">scripts/generate_doc_example_plots.py</span></code>.</span><a class="headerlink" href="#id3" title="Link to this image"></a></p>
 </figcaption>
 </figure>
 </section>

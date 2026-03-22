@@ -2,13 +2,16 @@
 """
 Generate static figures for Sphinx (docs/_static/examples/).
 
+Embedded in the docs under ``concepts/equations`` and ``user_guide/interface`` (not a separate gallery page).
+
 Run from the repository root:
 
     python scripts/generate_doc_example_plots.py
 
-Requires: numpy, matplotlib. Loads ``heatmap.py`` via importlib (no OpenGL).
-Connectivity curves use a **reduced 1D** chain with the same weight placement as ``pipeline.tick``
-(see docstrings in the figure captions).
+Requires: numpy, matplotlib; GUI-style figures also need the full simulator imports
+(``pipeline.tick``, ``SimState``, ``skimage``, etc.—same environment as ``main.py``).
+Loads ``heatmap.py`` via importlib (no OpenGL). Connectivity curves use a **reduced 1D** chain
+with the same weight placement as ``pipeline.tick`` (see docstrings in the figure captions).
 """
 from __future__ import annotations
 
@@ -55,7 +58,7 @@ def plot_heatmap_colormaps() -> None:
     g = g + 0.25 * np.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (2.0 * (sigma * 1.8) ** 2)).astype(np.float32)
 
     names = ["firing", "spectral", "diverging", "biphasic"]
-    fig, axes = plt.subplots(1, 4, figsize=(14, 3.2))
+    fig, axes = plt.subplots(1, 4, figsize=(10.0, 2.6))
     for ax, name in zip(axes, names):
         cmap = name if name != "firing" else "firing"
         rgba = grid_to_rgba(g, colormap=cmap, biphasic_center=0.0)  # type: ignore[arg-type]
@@ -64,7 +67,7 @@ def plot_heatmap_colormaps() -> None:
         ax.axis("off")
     fig.suptitle("2D heatmap colormaps (same underlying grid)", fontsize=12, y=1.02)
     plt.tight_layout()
-    fig.savefig(OUT / "heatmap_colormaps.png", dpi=140, bbox_inches="tight", facecolor="white")
+    fig.savefig(OUT / "heatmap_colormaps.png", dpi=130, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
 
@@ -74,7 +77,7 @@ def plot_ln_sigmoid() -> None:
     r_max, x_half, slope = 120.0, 0.0, 2.0
     r = r_max / (1.0 + np.exp(-slope * (x - x_half)))
 
-    fig, axes = plt.subplots(1, 3, figsize=(12, 3.2))
+    fig, axes = plt.subplots(1, 3, figsize=(9.0, 2.7))
     axes[0].plot(x, r, color="#c45c00", lw=2)
     axes[0].set_title("Baseline (r_max=120, slope=2, x_half=0)")
     axes[0].set_xlabel("generator G (a.u.)")
@@ -97,7 +100,7 @@ def plot_ln_sigmoid() -> None:
 
     fig.suptitle(r"LN model: $R = R_{\max}/(1+e^{-\beta(G-G_{1/2})})$", fontsize=12, y=1.05)
     plt.tight_layout()
-    fig.savefig(OUT / "ln_sigmoid_family.png", dpi=140, bbox_inches="tight", facecolor="white")
+    fig.savefig(OUT / "ln_sigmoid_family.png", dpi=130, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
 
@@ -121,7 +124,7 @@ def plot_cone_fundamentals_and_basis() -> None:
         if m > 0:
             b /= m
 
-    fig, axes = plt.subplots(3, 1, figsize=(9.5, 8.2), sharex=True)
+    fig, axes = plt.subplots(3, 1, figsize=(8.0, 6.8), sharex=True)
 
     axes[0].plot(lam, spec.sens_L, color="#c41e3a", lw=2.0, label=r"$\bar{l}$ (L)")
     axes[0].plot(lam, spec.sens_M, color="#228b22", lw=2.0, label=r"$\bar{m}$ (M)")
@@ -160,7 +163,7 @@ def plot_cone_fundamentals_and_basis() -> None:
 
     fig.suptitle("Stimulus and cone responses (equations §1)", fontsize=13, y=0.995)
     plt.tight_layout()
-    fig.savefig(OUT / "cone_fundamentals_and_basis.png", dpi=150, bbox_inches="tight", facecolor="white")
+    fig.savefig(OUT / "cone_fundamentals_and_basis.png", dpi=130, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
 
@@ -251,7 +254,7 @@ def plot_connectivity_weight_sensitivity() -> None:
         bipolar_to_rgc=1.0,
     )
 
-    fig, axes = plt.subplots(2, 3, figsize=(13.5, 7.8))
+    fig, axes = plt.subplots(2, 3, figsize=(10.5, 6.2))
     for ax, (k, title) in zip(np.ravel(axes), keys):
         ys = []
         for w in ws:
@@ -272,7 +275,170 @@ def plot_connectivity_weight_sensitivity() -> None:
         y=1.02,
     )
     plt.tight_layout()
-    fig.savefig(OUT / "connectivity_weight_sensitivity.png", dpi=150, bbox_inches="tight", facecolor="white")
+    fig.savefig(OUT / "connectivity_weight_sensitivity.png", dpi=130, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+
+def _histogram_rgc_fr_like_gui(flat: np.ndarray) -> tuple[list[float], list[float]]:
+    """Match ``_update_stats`` RGC histogram logic in ``src/gui/app.py`` (bin centers + counts)."""
+    flat = flat.astype(np.float64)
+    flat = flat[np.isfinite(flat)]
+    max_hist_points = 2048
+    if len(flat) > max_hist_points:
+        step = len(flat) // max_hist_points
+        flat = flat[::step][:max_hist_points]
+    if len(flat) == 0:
+        return [], []
+    mn, mx = float(np.min(flat)), float(np.max(flat))
+    if not np.isfinite(mn):
+        mn = 0.0
+    if not np.isfinite(mx):
+        mx = mn + 1.0
+    if mx <= mn:
+        mx = mn + 1.0
+        bins = 2
+    else:
+        min_range = max(1e-9, np.finfo(np.float64).tiny * 20)
+        if (mx - mn) < min_range:
+            mx = mn + 1.0
+            bins = 2
+        else:
+            bins = 16
+    try:
+        counts, edges = np.histogram(flat, bins=bins, range=(mn, mx))
+    except ValueError:
+        bins = 2
+        mx = mn + 1.0
+        counts, edges = np.histogram(flat, bins=bins, range=(mn, mx))
+    xs = [(float(edges[i]) + float(edges[i + 1])) / 2 for i in range(bins)]
+    counts_list = [float(c) for c in counts]
+    return xs, counts_list
+
+
+def plot_gui_panels_from_pipeline() -> None:
+    """
+    Headless ``pipeline.tick`` run; plots mirror the right-hand **Stats** and **Plots** tabs
+    (same means, histogram rule, and history lengths as ``app.py``).
+    """
+    from src.config import default_config
+    from src.simulation.pipeline import tick
+    from src.simulation.state import SimState
+
+    cfg = default_config()
+    state = SimState(config=cfg)
+    if hasattr(state.config, "spectral"):
+        setattr(state.config.spectral, "image_rgb_mapping", "rgbtolms")
+    state.stimulus_params.update(
+        {
+            "type": "drifting_grating_full",
+            "wavelength_nm": 550.0,
+            "intensity": 1.0,
+            "x_deg": 0.0,
+            "y_deg": 0.0,
+            "orientation_deg": 0.0,
+            "spatial_freq_cpd": 2.0,
+            "phase_deg": 0.0,
+            "vx_deg_s": 1.5,
+            "width_deg": 0.1,
+            "radius_deg": 0.15,
+            "rgb_mapping_mode": "rgbtolms",
+        }
+    )
+    dt = 1.0 / 60.0
+    n_warmup = 120
+    n_record = 200
+    rgc_hist: list[float] = []
+    oppo_hist: list[tuple[float, float]] = []
+    for _ in range(n_warmup + n_record):
+        tick(state, dt)
+        if state.fr_midget_on_L is not None:
+            rgc_hist.append(float(np.mean(state.fr_midget_on_L)))
+        if state.lm_opponent is not None and state.by_opponent is not None:
+            oppo_hist.append(
+                (float(np.mean(state.lm_opponent)), float(np.mean(state.by_opponent)))
+            )
+    spark = rgc_hist[-100:]
+    oppo = oppo_hist[-80:]
+    xs_sp = list(range(len(spark)))
+    # Mean FR by type (last tick) — same labels as Stats tab
+    m_midget = float(np.mean(state.fr_midget_on_L)) if state.fr_midget_on_L is not None else 0.0
+    m_parasol = float(np.mean(state.fr_parasol_on)) if state.fr_parasol_on is not None else 0.0
+    mL = mM = mS = 0.0
+    if state.cone_L is not None:
+        mL = float(np.mean(state.cone_L))
+        mM = float(np.mean(state.cone_M))
+        mS = float(np.mean(state.cone_S))
+
+    # --- Sparkline: RGC mean FR (midget ON L), last 100 ticks
+    fig, ax = plt.subplots(figsize=(5.2, 2.35))
+    ax.plot(xs_sp, spark, color="#2c5282", lw=1.8)
+    ax.set_xlabel("tick (last 100)")
+    ax.set_ylabel("mean FR (sp/s)")
+    ax.set_title("RGC mean FR — midget ON (L), spatial mean per tick")
+    ax.grid(True, alpha=0.35)
+    fig.tight_layout()
+    fig.savefig(OUT / "gui_rgc_mean_fr_sparkline.png", dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+    # --- Bar: mean FR by RGC type (text stats in GUI)
+    fig, ax = plt.subplots(figsize=(4.8, 2.0))
+    ax.barh([0, 1], [m_midget, m_parasol], height=0.55, color=("#c45c00", "#2c5282"))
+    ax.set_yticks([0, 1], ["Midget ON (L)", "Parasol ON"])
+    ax.set_xlabel("mean FR (sp/s), full grid")
+    ax.set_title("Mean FR per RGC type (Stats tab)")
+    ax.grid(True, axis="x", alpha=0.35)
+    fig.tight_layout()
+    fig.savefig(OUT / "gui_rgc_mean_fr_by_type.png", dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+    # --- Histogram: distribution of fr_midget_on_L (last frame)
+    flat = state.fr_midget_on_L.flatten() if state.fr_midget_on_L is not None else np.array([])
+    hx, hc = _histogram_rgc_fr_like_gui(flat)
+    fig, ax = plt.subplots(figsize=(5.2, 2.35))
+    if hx and hc:
+        if len(hx) >= 2:
+            bw = (hx[1] - hx[0]) * 0.88
+        else:
+            bw = max(0.5, (float(np.max(flat)) - float(np.min(flat))) / 16.0)
+        ax.bar(hx, hc, width=bw, color="#4a5568", edgecolor="white", linewidth=0.5)
+    ax.set_xlabel("firing rate (sp/s), bin center")
+    ax.set_ylabel("count (pixels)")
+    ax.set_title("RGC FR histogram — midget ON (L) grid")
+    ax.grid(True, axis="y", alpha=0.35)
+    fig.tight_layout()
+    fig.savefig(OUT / "gui_rgc_fr_histogram.png", dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+    # --- Cone mean drive (Plots tab bar chart)
+    fig, ax = plt.subplots(figsize=(4.6, 2.5))
+    ax.bar(
+        [0, 1, 2],
+        [mL, mM, mS],
+        width=0.45,
+        color=("#c41e3a", "#228b22", "#1e4fa0"),
+        edgecolor="white",
+    )
+    ax.set_xticks([0, 1, 2], ["L", "M", "S"])
+    ax.set_ylabel("spatial mean")
+    ax.set_title("Cone mean drive (raw L / M / S)")
+    ax.grid(True, axis="y", alpha=0.35)
+    fig.tight_layout()
+    fig.savefig(OUT / "gui_cone_mean_drive.png", dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+    # --- Opponent means over time (last 80 ticks)
+    fig, ax = plt.subplots(figsize=(5.2, 2.35))
+    if oppo:
+        xs_o = list(range(len(oppo)))
+        ax.plot(xs_o, [p[0] for p in oppo], label="L−M", color="#c41e3a", lw=1.8)
+        ax.plot(xs_o, [p[1] for p in oppo], label="S−(L+M)", color="#1e4fa0", lw=1.8)
+        ax.legend(fontsize=8, loc="upper right")
+    ax.set_xlabel("tick (last 80)")
+    ax.set_ylabel("spatial mean")
+    ax.set_title("Opponent means over time")
+    ax.grid(True, alpha=0.35)
+    fig.tight_layout()
+    fig.savefig(OUT / "gui_opponent_means_timeseries.png", dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
 
@@ -282,6 +448,7 @@ def main() -> None:
     plot_ln_sigmoid()
     plot_cone_fundamentals_and_basis()
     plot_connectivity_weight_sensitivity()
+    plot_gui_panels_from_pipeline()
     print(f"Wrote figures to {OUT}")
 
 

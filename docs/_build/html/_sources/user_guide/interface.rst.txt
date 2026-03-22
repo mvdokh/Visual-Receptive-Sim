@@ -1,7 +1,7 @@
 User interface
 ==============
 
-This page describes the **graphical interface**: panels, views, and how they connect to the model. For math and biology, use the concepts pages (linked below). For runnable plots that mirror the heatmap and LN code, see :doc:`examples`.
+This page describes the **graphical interface**: panels, views, and how they connect to the model. For math and biology, use the concepts pages (linked below).
 
 Theory cross-references
 -----------------------
@@ -18,17 +18,15 @@ Theory cross-references
      - :doc:`/concepts/biology`
    * - Equations, symbols, parameter list
      - :doc:`/concepts/equations` (:ref:`parameters`)
-   * - Plots of colormaps, LN curve, weights (same code paths as the app)
-     - :doc:`examples`
 
 Layout
 ------
 
 The window has three main areas:
 
-- **Left panel** — View mode, 2D layer selector (when applicable), stimulus controls, 3D camera and connectivity toggles when **3D Stack** is selected, viewport pick layer, and a bordered **Circuit tuning** block at the bottom (**synaptic weights** and **cell parameters**).
+- **Left panel** — View mode, 2D layer selector (when applicable), stimulus controls, and when **3D Stack** is selected: 3D camera, connectivity toggles, **Inspection layer** (coarse pick for viewport clicks), then **Circuit tuning** (**synaptic weights** and **cell parameters**) in the same scroll area.
 - **Center** — The main viewport: 2D heatmap, 2D all-layers mosaic, or the 3D Signal Flow Column (Vispy).
-- **Right panel (tabs)** — **Stats** (summary statistics, RGC sparkline and histogram, **Export data** buttons), **Inspector** (only when **3D Stack** is active; shows connectivity for the picked cell), **RGC Population** (42-type composition and optional modulation).
+- **Right panel (tabs)** — **Stats**, **Plots**, **Export** (below), and **Inspector** (only when **3D Stack** is active; connectivity for the picked cell).
 
 View mode
 ---------
@@ -48,14 +46,22 @@ Use **View → Mode** (left panel, **Mode** combo) to switch:
    * - **3D Stack**
      - Signal-flow column, connectivity lines, per-slab traces; **Inspector** tab becomes available; pick layer applies to viewport clicks.
 
-**Stats** and export always refer to the running simulation state (same pipeline as in :doc:`/concepts/equations`), regardless of view mode.
+**Stats**, **Plots**, and **Export** refer to the running simulation state (same pipeline as in :doc:`/concepts/equations`), regardless of view mode.
+
+Image stimuli use the **rgbtolms** RGB→spectrum mapping in the pipeline (no separate UI toggle).
 
 2D Heatmap mode
 ---------------
 
 - **Layer** combo selects which layer to display (Stimulus, Cones L/M/S, Horizontal, Bipolar ON, Amacrine, RGC Firing (L), etc.).
-- **Heatmap colormap** selects how scalar grids are painted: Firing (amber), Biphasic, Spectral, Diverging—see :doc:`examples` for side-by-side plots using ``grid_to_rgba``.
-- The heatmap uses a firing colormap (black → amber → white) for activation layers; **Stimulus** uses a spectral-derived RGB from the current stimulus spectrum (cone fundamentals in :doc:`/concepts/biology`).
+- **Heatmap colormap** selects how scalar grids are painted: Firing, Biphasic, Spectral, Diverging. These are the same modes as ``grid_to_rgba`` in ``src/rendering/heatmap.py`` (see figure below).
+- **Stimulus** uses a spectral-derived RGB from the current stimulus spectrum; other layers use the scalar colormaps as chosen.
+
+.. figure:: ../_static/examples/heatmap_colormaps.png
+   :align: center
+   :width: 70%
+
+   One synthetic 2D grid shown with the four colormap modes (``scripts/generate_doc_example_plots.py`` calls ``grid_to_rgba`` like the viewer).
 
 Image stimuli
 -------------
@@ -89,20 +95,94 @@ Editable weights: Cone to Horizontal, Cone to Bipolar, Horizontal to Cone, Bipol
 Cell parameters
 ~~~~~~~~~~~~~~~
 
-Tree nodes group **midget RGC**, **parasol**, **horizontal**, **amacrine**, and **temporal** settings. These map to :math:`\sigma` scales, LN parameters (:math:`r_{\max}`, slope, half-point), and :math:`\tau` values in :doc:`/concepts/equations`. The **LN** family plots in :doc:`examples` show how **r_max** and **slope** change the output nonlinearity.
+Tree nodes group **pathway** and **pool** knobs (narrow vs wide RGC fields, bipolar pooling, horizontal feedback, narrow vs wide lateral inhibition), not fixed histological names. They map to :math:`\sigma` scales, LN parameters (:math:`r_{\max}`, slope, half-point), and :math:`\tau` values in :doc:`/concepts/equations` (section 7 and the LN figure there).
 
-RGC Population tab
-------------------
+Stats tab
+---------
 
-Optional **population modulation** skews effective time constants and gains from a 42-type composition model (:doc:`/concepts/biology`, cell-type proportions). When **Enable population modulation** is on, the pipeline uses the modulated path described in the code and tests; the tab also shows validation hints and an effective-RF preview.
+The **Stats** tab reads the same arrays the pipeline writes each frame (see ``_update_stats`` in ``src/gui/app.py``).
 
-Stats and export
-----------------
+- **Mean FR per RGC type** — Spatial mean of the **midget ON (L)** and **parasol ON** firing-rate grids (``fr_midget_on_L``, ``fr_parasol_on``).
+- **L−M and S−(L+M)** — One summary line each: spatial mean of ``lm_opponent`` and ``by_opponent`` (same definitions as :doc:`/concepts/equations`, color-opponent section).
+- **Per-layer** — For Stimulus, Cones L/M/S, Horizontal, Bipolar, Amacrine, and RGC: mean, standard deviation, min, and max over the grid. Stimulus uses the spectrally summed mask (sum over wavelength); **RGC** here is the midget ON (L) firing grid.
+- **RGC dynamics → RGC mean FR (last 100 ticks)** — A line trace of the spatial mean of ``fr_midget_on_L`` each tick; the window keeps the last 100 samples so you can see drift or oscillation as the stimulus or state changes.
+- **RGC FR histogram** — Distribution of **pixel** values in the current ``fr_midget_on_L`` grid (default 16 bins over the data range; the UI updates this plot on a throttled cadence). Figures below use **example data** from a headless ``pipeline.tick`` run (same stimulus and logic as the app).
 
-The **Stats** tab lists mean firing, color-opponent summaries, per-layer lines, an RGC sparkline, and a histogram. Below **Export data**:
+.. figure:: ../_static/examples/gui_rgc_mean_fr_by_type.png
+   :align: center
+   :width: 58%
 
-- **Save screenshot (PNG)** — Captures the current viewport image.
-- **Save layer stats (CSV)** — Tabular summary of layers.
-- **Save layer grids (.npy)** — NumPy archive of layer arrays.
+   Example: mean firing rate across the grid for each type (same quantities as the two lines at the top of the Stats tab).
+
+.. figure:: ../_static/examples/gui_rgc_mean_fr_sparkline.png
+   :align: center
+   :width: 65%
+
+   Example: last 100 ticks of spatial mean **midget ON (L)** firing rate.
+
+.. figure:: ../_static/examples/gui_rgc_fr_histogram.png
+   :align: center
+   :width: 65%
+
+   Example: histogram of **midget ON (L)** firing rates over space at one time (same layer as the 2D heatmap when that layer is selected).
+
+Plots tab
+---------
+
+- **Cone mean drive (L / M / S)** — Three bars: spatial mean of ``cone_L``, ``cone_M``, and ``cone_S`` (raw cone outputs after the spectral inner product, before the horizontal surround step).
+- **Opponent means over time (last 80 ticks)** — Two traces: spatial mean of ``lm_opponent`` and ``by_opponent`` each tick, keeping the last 80 samples. **L−M** is built from midget ON L and M firing grids; **S−(L+M)** from effective cone outputs (see :doc:`/concepts/equations`).
+
+.. figure:: ../_static/examples/gui_cone_mean_drive.png
+   :align: center
+   :width: 52%
+
+   Example: cone mean drive bars (same three means as the Plots tab).
+
+.. figure:: ../_static/examples/gui_opponent_means_timeseries.png
+   :align: center
+   :width: 65%
+
+   Example: opponent means over the last 80 recorded ticks.
+
+Export tab
+----------
+
+.. list-table::
+   :widths: 28 72
+   :header-rows: 1
+
+   * - Control
+     - Output
+   * - **Save screenshot (PNG)**
+     - Captures the **current viewport** RGBA buffer (what you see in the center panel) as a PNG via ``export_screenshot_png`` in ``src/gui/panels/data_export.py``.
+   * - **Save layer stats (CSV)**
+     - One CSV row per named layer: **mean**, **min**, **max**, **std** over the grid. Layers: ``cone_L``, ``cone_M``, ``cone_S``, ``h_activation``, ``bp_midget_on_L``, ``bp_diffuse_on``, ``amacrine_aii``, ``fr_midget_on_L``, ``fr_parasol_on``, ``lm_opponent``, ``by_opponent``.
+   * - **Save layer grids (.npy)**
+     - Writes one ``.npy`` file per array into the **directory** you choose. Files match ``SimState`` field names (full 2D grids or stimulus spectrum ``(H, W, L)``). See the list in ``export_layer_grids_npy`` in ``data_export.py``.
+
+Arrays written by **Save layer grids** (when present on ``SimState``):
+
+.. list-table::
+   :widths: 22 78
+   :header-rows: 1
+
+   * - File
+     - Role
+   * - ``stimulus_spectrum.npy``
+     - Spectral radiance cube :math:`(H, W, L_\lambda)`.
+   * - ``cone_L.npy``, ``cone_M.npy``, ``cone_S.npy``
+     - Raw cone responses.
+   * - ``cone_L_eff.npy``, ``cone_M_eff.npy``, ``cone_S_eff.npy``
+     - Cone outputs after horizontal feedback.
+   * - ``h_activation.npy``
+     - Horizontal cell pool.
+   * - ``bp_*.npy``, ``amacrine_*.npy``
+     - Bipolar and amacrine layers (ON/OFF and pathways as named in code).
+   * - ``fr_*.npy``
+     - RGC firing rates (midget / parasol, ON / OFF).
+   * - ``lm_opponent.npy``, ``by_opponent.npy``
+     - Opponent maps (same as in :doc:`/concepts/equations`).
+
+Figures on this page are generated by ``scripts/generate_doc_example_plots.py`` (``plot_gui_panels_from_pipeline`` uses ``pipeline.tick`` with a drifting full-field grating so the time traces are non-trivial).
 
 For GitHub Pages deployment of this documentation, see :doc:`deploy_github_pages`.

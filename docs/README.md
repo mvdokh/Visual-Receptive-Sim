@@ -18,7 +18,7 @@ Then open `_build/html/index.html` in a browser.
 
 ## Example figures (optional)
 
-The **Examples** page (and figures embedded in `concepts/equations.rst`) use PNGs under `docs/_static/examples/`, e.g. `cone_fundamentals_and_basis.png`, `connectivity_weight_sensitivity.png`, `heatmap_colormaps.png`, `ln_sigmoid_family.png`. Regenerate them after changing `src/rendering/heatmap.py` or `scripts/generate_doc_example_plots.py`:
+The HTML docs embed PNGs from `docs/_static/examples/` in `concepts/equations.rst` and `user_guide/interface.rst` (equations figures, heatmap colormaps, and GUI-style plots: `gui_rgc_mean_fr_by_type.png`, `gui_rgc_mean_fr_sparkline.png`, `gui_rgc_fr_histogram.png`, `gui_cone_mean_drive.png`, `gui_opponent_means_timeseries.png`, etc.). Regenerate them after changing `src/rendering/heatmap.py`, `src/gui/app.py` stats logic, or `scripts/generate_doc_example_plots.py`:
 
 ```bash
 pip install numpy matplotlib   # SciPy not required; script uses NumPy convolutions
