@@ -2,6 +2,15 @@ Packaging
 
 This directory contains everything needed to build native executables for the simulator.
 
+App icon (Windows `.ico`, macOS `.icns`) is generated from the repo-root **`rgc_simulator_icon.svg`** before each PyInstaller run (`packaging/generate_app_icons.py`). Requires CairoSVG + Pillow from `packaging/requirements-build.txt`; on Linux, install Cairo dev headers (see CI workflow). Regenerate manually:
+
+```bash
+pip install -r packaging/requirements-build.txt
+python packaging/generate_app_icons.py --out-dir packaging/icons --icns   # omit --icns off macOS
+```
+
+Use `python packaging/build.py --no-icon` to skip icon rasterization.
+
 Artifacts by OS:
 - macOS: .app and .dmg
 - Windows: .exe

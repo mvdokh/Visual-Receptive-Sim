@@ -6,9 +6,11 @@ for consumption by ModernGL and Dear PyGui.
 Block-average downsampling for large-field display at screen resolution.
 """
 
-from typing import Literal, Optional, Tuple
+from typing import Any, Literal, Optional, Tuple
 
 import numpy as np
+
+from src.config import GlobalConfig, SpatialHeterogeneityMode
 
 # Scale bar: 100 µm default (bio_constants.SCALE_BAR_UM)
 # Literature: Masland 2012 (200 µm total thickness), Curcio et al. 1992 (cone diameter)
@@ -218,4 +220,89 @@ def draw_scale_bar_rgba(
     y0, y1 = max(0, y0), min(h, y1)
     rgba[y0:y1, x0:x1, :] = color
     # Label (simple white bar; text would require font rendering)
+    return rgba
+
+
+def _resample_mask_to_display(
+    mask_gh_gw: np.ndarray, display_h: int, display_w: int
+) -> np.ndarray:
+    """Nearest-neighbor map (gh, gw) boolean mask to (dh, dw)."""
+    gh, gw = mask_gh_gw.shape
+    yy = np.clip((np.arange(display_h) * gh / display_h).astype(np.int32), 0, gh - 1)
+    xx = np.clip((np.arange(display_w) * gw / display_w).astype(np.int32), 0, gw - 1)
+    return mask_gh_gw[yy[:, None], xx[None, :]]
+
+
+def _voronoi_edge_mask(cell_id: np.ndarray) -> np.ndarray:
+    g = np.asarray(cell_id)
+    e = (
+        (g != np.roll(g, 1, axis=0))
+        | (g != np.roll(g, -1, axis=0))
+        | (g != np.roll(g, 1, axis=1))
+        | (g != np.roll(g, -1, axis=1))
+    )
+    e[0, :] = e[-1, :] = e[:, 0] = e[:, -1] = False
+    return e
+
+
+def _eccentricity_isoline_mask(rf_map: np.ndarray, n_levels: int = 6) -> np.ndarray:
+    r = np.asarray(rf_map, dtype=np.float32)
+    lo, hi = float(r.min()), float(r.max())
+    if hi <= lo + 1e-6:
+        return np.zeros_like(r, dtype=bool)
+    edges = np.zeros_like(r, dtype=bool)
+    for lev in range(1, n_levels):
+        t = lo + (hi - lo) * lev / n_levels
+        b = r >= t
+        edges |= b != np.roll(b, 1, axis=0)
+        edges |= b != np.roll(b, 1, axis=1)
+    edges[0, :] = edges[-1, :] = edges[:, 0] = edges[:, -1] = False
+    return edges
+
+
+def composite_spatial_heterogeneity_overlays(
+    rgba: np.ndarray,
+    state: Any,
+    cfg: GlobalConfig,
+) -> np.ndarray:
+    """
+    Draw optional eccentricity isolines / Voronoi edges on display RGBA (in-place blend).
+    Maps are defined on the simulation grid; resampled to rgba resolution.
+    """
+    sh = cfg.spatial_heterogeneity
+    dh, dw = rgba.shape[0], rgba.shape[1]
+    cyan = np.array([0.2, 0.95, 1.0, 0.75], dtype=np.float32)
+    yellow = np.array([1.0, 0.92, 0.2, 0.8], dtype=np.float32)
+
+    if (
+        sh.mode == SpatialHeterogeneityMode.ECCENTRICITY
+        and sh.eccentricity.preview_overlay
+        and state.eccentricity_rf_scale_map is not None
+    ):
+        m = _eccentricity_isoline_mask(state.eccentricity_rf_scale_map)
+        md = _resample_mask_to_display(m, dh, dw)
+        rgba[md] = rgba[md] * 0.45 + cyan * 0.55
+
+    if (
+        sh.mode == SpatialHeterogeneityMode.MOSAIC
+        and sh.mosaic.show_overlay
+        and state.voronoi_cell_id is not None
+    ):
+        m = _voronoi_edge_mask(state.voronoi_cell_id)
+        md = _resample_mask_to_display(m, dh, dw)
+        rgba[md] = rgba[md] * 0.35 + yellow * 0.65
+
+        ctr = state.voronoi_centers_xy
+        if ctr is not None and ctr.shape[0] > 0:
+            gh, gw = state.grid_shape()
+            for i in range(ctr.shape[0]):
+                cy, cx = float(ctr[i, 0]), float(ctr[i, 1])
+                py = int(np.clip(cy * dh / gh, 0, dh - 1))
+                px = int(np.clip(cx * dw / gw, 0, dw - 1))
+                y0, y1 = max(0, py - 1), min(dh, py + 2)
+                x0, x1 = max(0, px - 1), min(dw, px + 2)
+                if px < dw:
+                    rgba[y0:y1, px : min(px + 1, dw)] = yellow
+                rgba[py : min(py + 1, dh), x0:x1] = yellow
+
     return rgba

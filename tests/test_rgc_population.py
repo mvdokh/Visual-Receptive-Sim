@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.config import default_config
+from src.config import RGCPopulationConfig, default_config
 from src.simulation.rgc_type_constants import RGC_TYPES, total_classified_fraction
 from src.simulation.rgc_population import (
     SI_BASELINE_MIDGET,
@@ -32,8 +32,8 @@ def test_normalize_fractions():
 
 
 def test_population_fractions_from_config_matches_defaults():
-    cfg = default_config()
-    tf = population_fractions_from_config(cfg.rgc_population)
+    rpc = RGCPopulationConfig()
+    tf = population_fractions_from_config(rpc)
     assert sum(tf.values()) == pytest.approx(1.0)
     ref = default_type_fractions()
     for k in RGC_TYPES:
@@ -41,8 +41,7 @@ def test_population_fractions_from_config_matches_defaults():
 
 
 def test_type_weight_multiplier_skews_fractions():
-    cfg = default_config()
-    rpc = cfg.rgc_population
+    rpc = RGCPopulationConfig()
     rpc.enabled = True
     base = population_fractions_from_config(rpc)
     rpc.type_weight_multipliers["ON_alpha"] = 3.0

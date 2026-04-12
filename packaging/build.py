@@ -16,6 +16,11 @@ PACKAGING_DIR = ROOT / "packaging"
 DIST_ROOT = PACKAGING_DIR / "dist"
 BUILD_ROOT = PACKAGING_DIR / "build"
 SPECS_ROOT = PACKAGING_DIR / "specs"
+ICON_SVG = ROOT / "rgc_simulator_icon.svg"
+ICONS_DIR = PACKAGING_DIR / "icons"
+ICON_ICO = ICONS_DIR / "app.ico"
+ICON_ICNS = ICONS_DIR / "app.icns"
+GENERATE_ICONS = PACKAGING_DIR / "generate_app_icons.py"
 
 
 def _run(cmd: list[str], cwd: Path | None = None) -> None:
@@ -43,6 +48,45 @@ def _clean(paths: list[Path]) -> None:
     for p in paths:
         if p.exists():
             shutil.rmtree(p)
+
+
+def _ensure_app_icons(target: str) -> None:
+    """Rasterize rgc_simulator_icon.svg for PyInstaller (--icon)."""
+    if not ICON_SVG.is_file():
+        print(
+            f"Warning: {ICON_SVG.name} not found; building without custom icon.",
+            file=sys.stderr,
+        )
+        return
+    if not GENERATE_ICONS.is_file():
+        print(
+            f"Warning: {GENERATE_ICONS.name} missing; building without custom icon.",
+            file=sys.stderr,
+        )
+        return
+    cmd = [
+        sys.executable,
+        str(GENERATE_ICONS),
+        "--svg",
+        str(ICON_SVG),
+        "--out-dir",
+        str(ICONS_DIR),
+    ]
+    if platform.system() == "Darwin":
+        cmd.append("--icns")
+    try:
+        _run(cmd)
+    except subprocess.CalledProcessError as exc:
+        print(
+            "Warning: icon generation failed; build continues without --icon. "
+            f"({exc})",
+            file=sys.stderr,
+        )
+        return
+    if target == "windows" and not ICON_ICO.is_file():
+        print("Warning: app.ico missing; Windows build has no custom icon.", file=sys.stderr)
+    if target == "macos" and not ICON_ICNS.is_file():
+        print("Warning: app.icns missing; macOS bundle has no custom icon.", file=sys.stderr)
 
 
 def _build_with_pyinstaller(target: str, clean: bool) -> Path:
@@ -80,6 +124,11 @@ def _build_with_pyinstaller(target: str, clean: bool) -> Path:
 
     if target in {"windows", "linux"}:
         cmd.insert(3, "--onefile")
+
+    if target == "windows" and ICON_ICO.is_file():
+        cmd.extend(["--icon", str(ICON_ICO)])
+    elif target == "macos" and ICON_ICNS.is_file():
+        cmd.extend(["--icon", str(ICON_ICNS)])
 
     _run(cmd)
     return target_dist
@@ -160,6 +209,11 @@ def main() -> None:
         action="store_true",
         help="macOS only: skip DMG creation and keep only the .app bundle.",
     )
+    parser.add_argument(
+        "--no-icon",
+        action="store_true",
+        help="Skip rasterizing rgc_simulator_icon.svg (no --icon for PyInstaller).",
+    )
     args = parser.parse_args()
 
     target = _detect_target() if args.target == "auto" else args.target
@@ -169,6 +223,9 @@ def main() -> None:
             f"Cross-compilation is not configured (current={current}, target={target}). "
             "Run this script on the target OS or use the GitHub Actions workflow."
         )
+
+    if not args.no_icon:
+        _ensure_app_icons(target)
 
     dist_dir = _build_with_pyinstaller(target=target, clean=args.clean)
 

@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>RGC Simulator Icon</title>
+  <desc>App icon featuring a stylized eye with retinal ganglion cell network on deep indigo background</desc>
+  <defs>
+    <clipPath id="circle-clip">
+      <circle cx="512" cy="512" r="400"/>
+    </clipPath>
+    <radialGradient id="iris-grad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0ff4d4" stop-opacity="0.18"/>
+      <stop offset="60%" stop-color="#0aa8c0" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#0a2a4a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="bg-grad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0f2d50"/>
+      <stop offset="100%" stop-color="#080f1e"/>
+    </radialGradient>
+    <radialGradient id="glow-center" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#00e8c6" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#00e8c6" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect x="0" y="0" width="1024" height="1024" rx="224" fill="url(#bg-grad)"/>
+  <circle cx="512" cy="512" r="410" fill="url(#iris-grad)"/>
+
+  <!-- Ganglion cell network -->
+  <g clip-path="url(#circle-clip)" opacity="0.55" stroke="#00c8a8" stroke-width="1.5" fill="none">
+    <path d="M512 512 Q604 408 678 318"/>
+    <path d="M512 512 Q624 452 715 398"/>
+    <path d="M512 512 Q614 506 700 490"/>
+    <path d="M512 512 Q560 390 578 294"/>
+    <path d="M512 512 Q420 408 346 318"/>
+    <path d="M512 512 Q400 452 309 398"/>
+    <path d="M512 512 Q410 506 324 490"/>
+    <path d="M512 512 Q464 390 446 294"/>
+    <path d="M512 512 Q554 624 602 706"/>
+    <path d="M512 512 Q512 634 512 736"/>
+    <path d="M512 512 Q470 624 422 706"/>
+    <path d="M512 512 Q592 588 678 624"/>
+    <path d="M512 512 Q432 588 346 624"/>
+    <path d="M678 318 Q722 292 748 264"/>
+    <path d="M715 398 Q770 378 805 350"/>
+    <path d="M346 318 Q302 292 276 264"/>
+    <path d="M309 398 Q254 378 219 350"/>
+    <path d="M602 706 Q618 762 632 796"/>
+    <path d="M422 706 Q406 762 392 796"/>
+    <path d="M512 736 Q509 786 506 820"/>
+    <path d="M678 624 Q734 634 774 616"/>
+    <path d="M346 624 Q290 634 250 616"/>
+  </g>
+
+  <!-- Soma dots -->
+  <g filter="url(#soft-glow)">
+    <circle cx="678" cy="318" r="9" fill="#00e8c6"/>
+    <circle cx="715" cy="398" r="8.5" fill="#00e8c6"/>
+    <circle cx="700" cy="490" r="7.5" fill="#00cfb4"/>
+    <circle cx="578" cy="294" r="7.5" fill="#00e8c6"/>
+    <circle cx="346" cy="318" r="9" fill="#00e8c6"/>
+    <circle cx="309" cy="398" r="8.5" fill="#00e8c6"/>
+    <circle cx="324" cy="490" r="7.5" fill="#00cfb4"/>
+    <circle cx="446" cy="294" r="7.5" fill="#00e8c6"/>
+    <circle cx="602" cy="706" r="8.5" fill="#00e8c6"/>
+    <circle cx="512" cy="736" r="9" fill="#00e8c6"/>
+    <circle cx="422" cy="706" r="8.5" fill="#00e8c6"/>
+    <circle cx="678" cy="624" r="7.5" fill="#00cfb4"/>
+    <circle cx="346" cy="624" r="7.5" fill="#00cfb4"/>
+    <circle cx="748" cy="264" r="6" fill="#00e8c6" opacity="0.7"/>
+    <circle cx="805" cy="350" r="6" fill="#00e8c6" opacity="0.7"/>
+    <circle cx="276" cy="264" r="6" fill="#00e8c6" opacity="0.7"/>
+    <circle cx="219" cy="350" r="6" fill="#00e8c6" opacity="0.7"/>
+    <circle cx="632" cy="796" r="6" fill="#00e8c6" opacity="0.7"/>
+    <circle cx="392" cy="796" r="6" fill="#00e8c6" opacity="0.7"/>
+    <circle cx="506" cy="820" r="6" fill="#00e8c6" opacity="0.7"/>
+    <circle cx="774" cy="616" r="6" fill="#00e8c6" opacity="0.7"/>
+    <circle cx="250" cy="616" r="6" fill="#00e8c6" opacity="0.7"/>
+  </g>
+
+  <!-- Optic nerve bundle -->
+  <g opacity="0.35" stroke="#5ba8d4" stroke-width="2" fill="none">
+    <path d="M512 512 Q540 528 604 544 Q656 556 718 558"/>
+    <path d="M512 512 Q540 526 606 538 Q660 548 720 549"/>
+    <path d="M512 512 Q541 524 608 532 Q664 540 724 540"/>
+    <path d="M512 512 Q539 530 602 550 Q654 562 716 564"/>
+  </g>
+  <circle cx="728" cy="552" r="30" fill="#1a3a58" stroke="#5ba8d4" stroke-width="2.5" opacity="0.9"/>
+  <circle cx="728" cy="552" r="15" fill="#0d1e30" opacity="0.85"/>
+
+  <!-- Iris -->
+  <circle cx="512" cy="512" r="118" fill="none" stroke="#1e6fa0" stroke-width="3" opacity="0.7"/>
+  <g opacity="0.3" stroke="#2a90c8" stroke-width="1.2" fill="none">
+    <path d="M512 394 Q538 424 538 512 Q538 600 512 630"/>
+    <path d="M512 394 Q486 424 486 512 Q486 600 512 630"/>
+    <path d="M394 512 Q424 534 512 534 Q600 534 630 512"/>
+    <path d="M394 512 Q424 490 512 490 Q600 490 630 512"/>
+    <path d="M420 432 Q460 468 512 476 Q564 468 604 432"/>
+    <path d="M420 592 Q460 556 512 548 Q564 556 604 592"/>
+  </g>
+  <circle cx="512" cy="512" r="115" fill="url(#glow-center)" opacity="0.6"/>
+
+  <!-- Pupil -->
+  <circle cx="512" cy="512" r="56" fill="#050c18"/>
+  <circle cx="512" cy="512" r="53" fill="none" stroke="#00e8c6" stroke-width="1.5" opacity="0.8"/>
+  <circle cx="491" cy="491" r="10" fill="#00e8c6" opacity="0.55"/>
+  <circle cx="530" cy="530" r="5.5" fill="#fff" opacity="0.35"/>
+
+  <!-- Center RGC soma -->
+  <circle cx="512" cy="512" r="15" fill="#00e8c6" filter="url(#soft-glow)"/>
+
+  <!-- Receptive field rings -->
+  <circle cx="512" cy="512" r="165" fill="none" stroke="#1e4a6a" stroke-width="1.5" stroke-dasharray="10 8" opacity="0.6"/>
+  <circle cx="512" cy="512" r="222" fill="none" stroke="#153a55" stroke-width="1.2" stroke-dasharray="6 11" opacity="0.4"/>
+
+  <rect x="0" y="0" width="1024" height="1024" rx="224" fill="none" stroke="#1e4a70" stroke-width="4"/>
+</svg>

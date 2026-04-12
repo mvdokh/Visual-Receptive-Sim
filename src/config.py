@@ -11,6 +11,7 @@ both the 2D and 3D viewers for consistent biological accuracy.
 """
 
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -181,9 +182,107 @@ def _default_rgc_type_weight_multipliers() -> Dict[str, float]:
     return {k: 1.0 for k in RGC_TYPES}
 
 
+class SpatialHeterogeneityMode(str, Enum):
+    """Exactly one mode active (or homogeneous default)."""
+
+    HOMOGENEOUS = "homogeneous"
+    SCATTER = "scatter"
+    TYPE_MAP = "type_map"
+    ECCENTRICITY = "eccentricity"
+    MOSAIC = "mosaic"
+
+
+class MosaicLayoutType(str, Enum):
+    HEX_REGULAR = "hex_regular"
+    HEX_JITTER = "hex_jitter"
+    POISSON = "poisson"
+
+
+class EccentricityGradientType(str, Enum):
+    LINEAR = "linear"
+    SQRT = "sqrt"
+    EMPIRICAL = "empirical"
+
+
+def _default_spatial_type_fractions() -> Tuple[float, float, float, float, float, float]:
+    """Six UI buckets: Midget ON, Midget OFF, Parasol ON, Parasol OFF, Bistratified, Other."""
+    x = 1.0 / 6.0
+    return (x, x, x, x, x, x)
+
+
+def _default_six_ones() -> Tuple[float, float, float, float, float, float]:
+    return (1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
+
+
+@dataclass
+class ScatterHeterogeneityParams:
+    """Gaussian multiplicative noise on selected pathway weights (per pixel)."""
+
+    sigma: float = 0.0
+    affect_cone_to_bipolar: bool = True
+    affect_bipolar_to_rgc: bool = True
+    affect_amacrine_to_bipolar: bool = True
+    resample_seed: int = 1
+
+
+@dataclass
+class TypeMapHeterogeneityParams:
+    """Discrete type identity per pixel; RF and gain scale by bucket."""
+
+    # Midget ON, Midget OFF, Parasol ON, Parasol OFF, Bistratified, Other
+    type_fractions: Tuple[float, float, float, float, float, float] = field(
+        default_factory=_default_spatial_type_fractions
+    )
+    rf_multiplier: Tuple[float, float, float, float, float, float] = field(
+        default_factory=_default_six_ones
+    )
+    gain_multiplier: Tuple[float, float, float, float, float, float] = field(
+        default_factory=_default_six_ones
+    )
+    map_seed: int = 42
+
+
+@dataclass
+class EccentricityHeterogeneityParams:
+    """Fovea-centered eccentricity modulates RGC pooling (via binned sigmas in pipeline)."""
+
+    fovea_px_x: float = 128.0  # overridden from grid center when rebuilding if left default
+    fovea_px_y: float = 128.0
+    eccentricity_scale_deg_per_px: float = 0.01
+    gradient: EccentricityGradientType = EccentricityGradientType.LINEAR
+    preview_overlay: bool = False
+    # Strength of RF growth with eccentricity (unitless multiplier ramp)
+    rf_growth_strength: float = 0.5
+
+
+@dataclass
+class MosaicHeterogeneityParams:
+    """Voronoi mosaic of explicit RGC units."""
+
+    n_cells: int = 400
+    mosaic_type: MosaicLayoutType = MosaicLayoutType.HEX_JITTER
+    jitter_sigma: float = 0.15
+    show_overlay: bool = False
+    static_snapshot_while_building: bool = False
+    mosaic_seed: int = 7
+
+
+@dataclass
+class SpatialHeterogeneityConfig:
+    """Spatial heterogeneity mode and parameters (only active mode is applied in pipeline)."""
+
+    mode: SpatialHeterogeneityMode = SpatialHeterogeneityMode.HOMOGENEOUS
+    scatter: ScatterHeterogeneityParams = field(default_factory=ScatterHeterogeneityParams)
+    type_map: TypeMapHeterogeneityParams = field(default_factory=TypeMapHeterogeneityParams)
+    eccentricity: EccentricityHeterogeneityParams = field(
+        default_factory=EccentricityHeterogeneityParams
+    )
+    mosaic: MosaicHeterogeneityParams = field(default_factory=MosaicHeterogeneityParams)
+
+
 @dataclass
 class RGCPopulationConfig:
-    """42-type RGC population composition; disabled = legacy circuit behavior."""
+    """42-type RGC population composition (standalone; for tests and population_fractions_from_config)."""
 
     enabled: bool = False
     type_fractions: Dict[str, float] = field(default_factory=_default_rgc_type_fractions)
@@ -235,7 +334,9 @@ class GlobalConfig:
     dendritic: DendriticFieldParams = field(default_factory=DendriticFieldParams)
     spectral: SpectralConfig = field(default_factory=SpectralConfig)
     viewer_3d: Viewer3DConfig = field(default_factory=Viewer3DConfig)
-    rgc_population: RGCPopulationConfig = field(default_factory=RGCPopulationConfig)
+    spatial_heterogeneity: SpatialHeterogeneityConfig = field(
+        default_factory=SpatialHeterogeneityConfig
+    )
     spike_output: SpikeOutputConfig = field(default_factory=SpikeOutputConfig)
 
 

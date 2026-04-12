@@ -1,5 +1,7 @@
 # =============================================================
 # Biological constants for the RGC Circuit Simulator
+from __future__ import annotations
+
 from dataclasses import dataclass
 # All values sourced from peer-reviewed human/mammalian retina data.
 # Both the 2D heatmap viewer and the 3D Signal Flow viewer import
@@ -151,3 +153,28 @@ RELATIVE_DENSITY = {
     "muller": 16,      # ~16% of INL (render only if glia layer shown)
     "rgc": 1,          # convergence reference point
 }
+
+# --- Curcio & Allen (1990): schematic total RGC density vs eccentricity (human, relative units) ---
+# Used for empirical eccentricity-gradient RF scaling in spatial heterogeneity mode.
+# Knots are degrees from fovea; values are arbitrary relative density (fovea >> periphery).
+CURCIO_ECCENTRICITY_DEG_KNOTS: tuple[float, ...] = (
+    0.0,
+    0.5,
+    2.0,
+    5.0,
+    10.0,
+    20.0,
+    40.0,
+    60.0,
+)
+CURCIO_RGC_DENSITY_REL_KNOTS: tuple[float, ...] = (
+    35.0,
+    20.0,
+    8.0,
+    3.5,
+    1.5,
+    0.6,
+    0.25,
+    0.15,
+)
+EMPIRICAL_ECCENTRICITY_AVAILABLE: bool = True

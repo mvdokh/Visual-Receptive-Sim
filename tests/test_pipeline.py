@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from src.config import default_config
+from src.config import SpatialHeterogeneityMode, default_config
 from src.simulation.pipeline import tick, SMOOTHED_LAYERS
 from src.simulation.state import SimState
 
@@ -88,21 +88,45 @@ def test_rgc_nl_r_max_affects_firing_ceiling(state):
     assert hi > lo + 5.0
 
 
-def test_rgc_population_enabled_skew_changes_horizontal_activation(state):
-    """Uniform group scales normalize away; skewing one group changes modulation and h_activation."""
+def test_spatial_scatter_heterogeneity_changes_fr_output(state):
+    """Parameter scatter mode perturbs pathway weights and changes RGC firing vs homogeneous."""
     state.ensure_initialized()
     state.stimulus_params = {"type": "full_field", "intensity": 0.6}
-    rpc = state.config.rgc_population
-    rpc.enabled = False
+    state.config.spatial_heterogeneity.mode = SpatialHeterogeneityMode.HOMOGENEOUS
+    state.heterogeneity_dirty = True
     tick(state, 0.05)
-    h_disabled = float(np.mean(state.h_activation))
-    rpc.enabled = True
-    for g in rpc.group_scales:
-        rpc.group_scales[g] = 1.0
-    rpc.group_scales["OFF_sustained"] = 5.0
+    ref = np.asarray(state.fr_midget_on_L, dtype=np.float64).copy()
+    state.config.spatial_heterogeneity.mode = SpatialHeterogeneityMode.SCATTER
+    state.config.spatial_heterogeneity.scatter.sigma = 0.4
+    state.heterogeneity_dirty = True
     tick(state, 0.05)
-    h_skew = float(np.mean(state.h_activation))
-    assert h_disabled != h_skew
+    assert not np.allclose(ref, state.fr_midget_on_L, atol=1e-3)
+
+
+def test_spatial_heterogeneity_one_tick_per_mode_shape_dtype(state):
+    """Each spatial heterogeneity mode runs one tick with finite float32 outputs."""
+    modes = (
+        SpatialHeterogeneityMode.HOMOGENEOUS,
+        SpatialHeterogeneityMode.SCATTER,
+        SpatialHeterogeneityMode.TYPE_MAP,
+        SpatialHeterogeneityMode.ECCENTRICITY,
+        SpatialHeterogeneityMode.MOSAIC,
+    )
+    gh, gw = state.grid_shape()
+    for m in modes:
+        state.config.spatial_heterogeneity.mode = m
+        if m == SpatialHeterogeneityMode.SCATTER:
+            state.config.spatial_heterogeneity.scatter.sigma = 0.1
+        if m == SpatialHeterogeneityMode.MOSAIC:
+            state.config.spatial_heterogeneity.mosaic.n_cells = 120
+        state.heterogeneity_dirty = True
+        state.ensure_initialized()
+        state.stimulus_params = {"type": "full_field", "intensity": 0.5}
+        tick(state, 0.05)
+        fr = state.fr_midget_on_L
+        assert fr.shape == (gh, gw)
+        assert fr.dtype == np.float32
+        assert np.all(np.isfinite(fr))
 
 
 def test_tick_smoothed_layers_updated(state):

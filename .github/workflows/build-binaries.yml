@@ -29,6 +29,12 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install Linux packaging libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcairo2-dev pkg-config python3-dev librsvg2-bin
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip

@@ -1,10 +1,13 @@
-# RGC Circuit Simulator
+<h1>
+  <img src="rgc_simulator_icon.svg" width="42" height="42" alt="RGC Circuit Simulator icon" style="vertical-align: middle; margin-right: 10px;" />
+  Retinal Circuit Simulator
+</h1>
 
 ![RGC circuit simulator UI](images/screenshot1.png)
 
 ![RGC circuit simulator overview](images/screenshot2.png)
 
-Retinal ganglion cell circuit simulator: stimulus → cones → horizontals → bipolars → amacrines → RGCs. Vectorized NumPy/SciPy pipeline, Cython hotspots, Dear PyGui.
+Retinal circuit simulator: stimulus → cones → horizontals → bipolars → amacrines → RGCs. Vectorized NumPy/SciPy pipeline, Cython hotspots, Dear PyGui.
 
 ## Quick Start
 

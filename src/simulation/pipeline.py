@@ -22,12 +22,8 @@ from typing import Iterable
 
 import numpy as np
 
-from src.config import GlobalConfig
-from src.simulation.rgc_population import (
-    calibrated_dendritic_sigmas_deg,
-    compute_cross_type_rf_modulation,
-    population_fractions_from_config,
-)
+from src.config import GlobalConfig, SpatialHeterogeneityMode
+from src.simulation.spatial_heterogeneity_maps import rebuild_spatial_heterogeneity
 from src.simulation.state import SimState
 from src.simulation.stimulus.spectral import build_stimulus_spectrum
 from src.simulation.fast_conv import gaussian_pool_2d
@@ -60,6 +56,54 @@ SMOOTHED_LAYERS: Iterable[str] = [
     "fr_parasol_on",
     "fr_parasol_off",
 ]
+
+
+def _gather_from_stack(stack: np.ndarray, idx_map: np.ndarray) -> np.ndarray:
+    """stack (K, H, W); idx_map (H, W) with values in [0, K-1]."""
+    ii = np.asarray(idx_map, dtype=np.int64)
+    k = stack.shape[0]
+    ii = np.clip(ii, 0, k - 1)
+    return np.take_along_axis(stack, ii.reshape(1, *ii.shape), axis=0)[0]
+
+
+def _rgc_pool_stack_bins(
+    drive: np.ndarray,
+    sigma_center_deg: np.ndarray,
+    dx_deg: float,
+) -> np.ndarray:
+    K = int(sigma_center_deg.shape[0])
+    out = np.empty((K,) + drive.shape, dtype=np.float32)
+    for k in range(K):
+        spx = float(sigma_center_deg[k]) / dx_deg
+        spx = max(spx, 1e-6)
+        out[k] = gaussian_pool_2d(drive, spx, mode="reflect")
+    return out
+
+
+def _rgc_pool_stack_type_map(
+    drive: np.ndarray,
+    gain: np.ndarray,
+    sigma_center_deg: np.ndarray,
+    dx_deg: float,
+) -> np.ndarray:
+    K = int(gain.shape[0])
+    out = np.empty((K,) + drive.shape, dtype=np.float32)
+    for k in range(K):
+        dk = drive * float(gain[k])
+        spx = float(sigma_center_deg[k]) / dx_deg
+        spx = max(spx, 1e-6)
+        out[k] = gaussian_pool_2d(dk, spx, mode="reflect")
+    return out
+
+
+def _mosaic_cell_mean(arr: np.ndarray, labels: np.ndarray, n_cell: int) -> np.ndarray:
+    flat_a = arr.ravel().astype(np.float64)
+    flat_l = labels.ravel().astype(np.int64)
+    sums = np.bincount(flat_l, weights=flat_a, minlength=n_cell)
+    cnt = np.bincount(flat_l, minlength=n_cell)
+    return (sums / np.maximum(cnt, 1.0)).astype(np.float32)
+
+
 def tick(state: SimState, dt: float) -> None:
     """
     Advance the simulation by one time step of length `dt` (seconds).
@@ -68,37 +112,27 @@ def tick(state: SimState, dt: float) -> None:
     """
     state.ensure_initialized()
     cfg: GlobalConfig = state.config
+
+    if state.heterogeneity_dirty:
+        rebuild_spatial_heterogeneity(state, cfg)
+        state.heterogeneity_dirty = False
+
     state.time += dt
 
-    rpc = getattr(cfg, "rgc_population", None)
-    if rpc is not None and rpc.enabled:
-        tf_rpc = population_fractions_from_config(rpc)
-        mod = compute_cross_type_rf_modulation(tf_rpc)
-        alpha_lm_use = cfg.horizontal.alpha_lm * mod["horizontal_alpha_lm_scale"]
-        alpha_s_use = cfg.horizontal.alpha_s * mod["horizontal_alpha_lm_scale"]
-        gm_aii = cfg.amacrine.gamma_aii * mod["gamma_aii_scale"]
-        gm_wide = cfg.amacrine.gamma_wide * mod["gamma_wide_scale"]
-        sm_deg, sp_deg, si_m_rel, si_p_rel, r_scale, sur_m_deg, sur_p_deg = (
-            calibrated_dendritic_sigmas_deg(
-                tf_rpc,
-                cfg.dendritic.sigma_midget_deg,
-                cfg.dendritic.sigma_parasol_deg,
-                rpc.t5_cluster_bias,
-            )
-        )
-        r_max_eff = cfg.rgc_nl.r_max * r_scale
-    else:
-        alpha_lm_use = cfg.horizontal.alpha_lm
-        alpha_s_use = cfg.horizontal.alpha_s
-        gm_aii = cfg.amacrine.gamma_aii
-        gm_wide = cfg.amacrine.gamma_wide
-        sm_deg = cfg.dendritic.sigma_midget_deg
-        sp_deg = cfg.dendritic.sigma_parasol_deg
-        si_m_rel = 0.0
-        si_p_rel = 0.0
-        sur_m_deg = 0.0
-        sur_p_deg = 0.0
-        r_max_eff = cfg.rgc_nl.r_max
+    hem = cfg.spatial_heterogeneity.mode
+
+    alpha_lm_use = cfg.horizontal.alpha_lm
+    alpha_s_use = cfg.horizontal.alpha_s
+    gm_aii = cfg.amacrine.gamma_aii
+    gm_wide = cfg.amacrine.gamma_wide
+    sm_deg = cfg.dendritic.sigma_midget_deg
+    sp_deg = cfg.dendritic.sigma_parasol_deg
+    si_m_rel = 0.0
+    si_p_rel = 0.0
+    sur_m_deg = 0.0
+    sur_p_deg = 0.0
+    r_max_eff = cfg.rgc_nl.r_max
+    dx_deg = cfg.retina.dx_deg
 
     # 1. Stimulus spectrum grid (H, W, L); pass retina so 1° scales with grid
     state.stimulus_spectrum = build_stimulus_spectrum(
@@ -162,13 +196,20 @@ def tick(state: SimState, dt: float) -> None:
 
     # 5. Bipolar responses (cone_to_bipolar scales effective cone input)
     cone_to_bp = cw.cone_to_bipolar if cw else 1.0
+    sc_cb = (
+        state.scatter_cone_to_bipolar
+        if hem == SpatialHeterogeneityMode.SCATTER
+        and state.scatter_cone_to_bipolar is not None
+        else None
+    )
+    cb_m = sc_cb if sc_cb is not None else np.float32(1.0)
     sigma_diffuse = cfg.bipolar.sigma_diffuse_deg / cfg.retina.dx_deg
-    cone_lm_eff = (state.cone_L_eff + state.cone_M_eff) * cone_to_bp
+    cone_lm_eff = (state.cone_L_eff + state.cone_M_eff) * cone_to_bp * cb_m
 
-    state.bp_midget_on_L = np.maximum(0.0, state.cone_L_eff * cone_to_bp)
-    state.bp_midget_off_L = np.maximum(0.0, -state.cone_L_eff * cone_to_bp)
-    state.bp_midget_on_M = np.maximum(0.0, state.cone_M_eff * cone_to_bp)
-    state.bp_midget_off_M = np.maximum(0.0, -state.cone_M_eff * cone_to_bp)
+    state.bp_midget_on_L = np.maximum(0.0, state.cone_L_eff * cone_to_bp * cb_m)
+    state.bp_midget_off_L = np.maximum(0.0, -state.cone_L_eff * cone_to_bp * cb_m)
+    state.bp_midget_on_M = np.maximum(0.0, state.cone_M_eff * cone_to_bp * cb_m)
+    state.bp_midget_off_M = np.maximum(0.0, -state.cone_M_eff * cone_to_bp * cb_m)
 
     pooled = gaussian_pool_2d(cone_lm_eff, sigma_diffuse, mode="reflect")
     state.bp_diffuse_on = np.maximum(0.0, pooled)
@@ -185,13 +226,24 @@ def tick(state: SimState, dt: float) -> None:
     )
     state.amacrine_wide = gaussian_pool_2d(cone_lm_eff * bp_to_am, sigma_wide, mode="reflect")
 
-    total_amacrine = (
-        gm_aii * am_to_bp * state.amacrine_aii
-        + gm_wide * am_to_bp * state.amacrine_wide
+    sc_am = (
+        state.scatter_amacrine_to_bipolar
+        if hem == SpatialHeterogeneityMode.SCATTER
+        and state.scatter_amacrine_to_bipolar is not None
+        else None
     )
+    core_am = gm_aii * am_to_bp * state.amacrine_aii + gm_wide * am_to_bp * state.amacrine_wide
+    total_amacrine = core_am * sc_am if sc_am is not None else core_am
 
     # 7. RGC generators (bipolar_to_rgc scales drive)
     bp_to_rgc = cw.bipolar_to_rgc if cw else 1.0
+    sc_rgc = (
+        state.scatter_bipolar_to_rgc
+        if hem == SpatialHeterogeneityMode.SCATTER
+        and state.scatter_bipolar_to_rgc is not None
+        else None
+    )
+    rgc_m = sc_rgc if sc_rgc is not None else np.float32(1.0)
 
     def rgc_generator(
         bp_grid: np.ndarray,
@@ -200,7 +252,7 @@ def tick(state: SimState, dt: float) -> None:
         si_rel: float,
     ) -> np.ndarray:
         sigma_c_px = sigma_center_deg / cfg.retina.dx_deg
-        drive = (bp_grid - total_amacrine) * bp_to_rgc
+        drive = (bp_grid - total_amacrine) * bp_to_rgc * rgc_m
         center = gaussian_pool_2d(drive, sigma_c_px, mode="reflect")
         if si_rel <= 1e-12 or sigma_surround_deg <= 1e-12:
             return center
@@ -208,24 +260,87 @@ def tick(state: SimState, dt: float) -> None:
         surr = gaussian_pool_2d(drive, sigma_s_px, mode="reflect")
         return center - si_rel * surr
 
-    state.rgc_midget_on_L = rgc_generator(
-        state.bp_midget_on_L, sm_deg, sur_m_deg, si_m_rel
-    )
-    state.rgc_midget_off_L = rgc_generator(
-        state.bp_midget_off_L, sm_deg, sur_m_deg, si_m_rel
-    )
-    state.rgc_midget_on_M = rgc_generator(
-        state.bp_midget_on_M, sm_deg, sur_m_deg, si_m_rel
-    )
-    state.rgc_midget_off_M = rgc_generator(
-        state.bp_midget_off_M, sm_deg, sur_m_deg, si_m_rel
-    )
-    state.rgc_parasol_on = rgc_generator(
-        state.bp_diffuse_on, sp_deg, sur_p_deg, si_p_rel
-    )
-    state.rgc_parasol_off = rgc_generator(
-        state.bp_diffuse_off, sp_deg, sur_p_deg, si_p_rel
-    )
+    def drive_field(bp_grid: np.ndarray) -> np.ndarray:
+        return (bp_grid - total_amacrine) * bp_to_rgc * rgc_m
+
+    if hem == SpatialHeterogeneityMode.TYPE_MAP and state.type_map is not None:
+        tm = state.type_map
+        ptm = cfg.spatial_heterogeneity.type_map
+        rf = np.asarray(ptm.rf_multiplier, dtype=np.float64)
+        gn = np.asarray(ptm.gain_multiplier, dtype=np.float64)
+        sigma_m = sm_deg * rf
+        sigma_p = sp_deg * rf
+
+        def rgc_tm(bp: np.ndarray, sig: np.ndarray) -> np.ndarray:
+            d = drive_field(bp)
+            stack = _rgc_pool_stack_type_map(d, gn.astype(np.float64), sig, dx_deg)
+            return _gather_from_stack(stack, tm)
+
+        state.rgc_midget_on_L = rgc_tm(state.bp_midget_on_L, sigma_m)
+        state.rgc_midget_off_L = rgc_tm(state.bp_midget_off_L, sigma_m)
+        state.rgc_midget_on_M = rgc_tm(state.bp_midget_on_M, sigma_m)
+        state.rgc_midget_off_M = rgc_tm(state.bp_midget_off_M, sigma_m)
+        state.rgc_parasol_on = rgc_tm(state.bp_diffuse_on, sigma_p)
+        state.rgc_parasol_off = rgc_tm(state.bp_diffuse_off, sigma_p)
+    elif (
+        hem == SpatialHeterogeneityMode.ECCENTRICITY
+        and state.eccentricity_bin_map is not None
+        and state.eccentricity_bin_rep_scale is not None
+    ):
+        rep = np.asarray(state.eccentricity_bin_rep_scale, dtype=np.float64)
+        bmap = state.eccentricity_bin_map
+        sigma_m_bins = sm_deg * rep
+        sigma_p_bins = sp_deg * rep
+
+        def rgc_ecc(bp: np.ndarray, sig_bins: np.ndarray) -> np.ndarray:
+            d = drive_field(bp)
+            stack = _rgc_pool_stack_bins(d, sig_bins, dx_deg)
+            return _gather_from_stack(stack, bmap)
+
+        state.rgc_midget_on_L = rgc_ecc(state.bp_midget_on_L, sigma_m_bins)
+        state.rgc_midget_off_L = rgc_ecc(state.bp_midget_off_L, sigma_m_bins)
+        state.rgc_midget_on_M = rgc_ecc(state.bp_midget_on_M, sigma_m_bins)
+        state.rgc_midget_off_M = rgc_ecc(state.bp_midget_off_M, sigma_m_bins)
+        state.rgc_parasol_on = rgc_ecc(state.bp_diffuse_on, sigma_p_bins)
+        state.rgc_parasol_off = rgc_ecc(state.bp_diffuse_off, sigma_p_bins)
+    elif (
+        hem == SpatialHeterogeneityMode.MOSAIC
+        and state.voronoi_cell_id is not None
+        and state.mosaic_n_cells > 0
+    ):
+        lab = state.voronoi_cell_id
+        nc = int(state.mosaic_n_cells)
+
+        def rgc_mosaic(bp: np.ndarray) -> np.ndarray:
+            d = drive_field(bp)
+            cell_m = _mosaic_cell_mean(d, lab, nc)
+            return cell_m[lab]
+
+        state.rgc_midget_on_L = rgc_mosaic(state.bp_midget_on_L)
+        state.rgc_midget_off_L = rgc_mosaic(state.bp_midget_off_L)
+        state.rgc_midget_on_M = rgc_mosaic(state.bp_midget_on_M)
+        state.rgc_midget_off_M = rgc_mosaic(state.bp_midget_off_M)
+        state.rgc_parasol_on = rgc_mosaic(state.bp_diffuse_on)
+        state.rgc_parasol_off = rgc_mosaic(state.bp_diffuse_off)
+    else:
+        state.rgc_midget_on_L = rgc_generator(
+            state.bp_midget_on_L, sm_deg, sur_m_deg, si_m_rel
+        )
+        state.rgc_midget_off_L = rgc_generator(
+            state.bp_midget_off_L, sm_deg, sur_m_deg, si_m_rel
+        )
+        state.rgc_midget_on_M = rgc_generator(
+            state.bp_midget_on_M, sm_deg, sur_m_deg, si_m_rel
+        )
+        state.rgc_midget_off_M = rgc_generator(
+            state.bp_midget_off_M, sm_deg, sur_m_deg, si_m_rel
+        )
+        state.rgc_parasol_on = rgc_generator(
+            state.bp_diffuse_on, sp_deg, sur_p_deg, si_p_rel
+        )
+        state.rgc_parasol_off = rgc_generator(
+            state.bp_diffuse_off, sp_deg, sur_p_deg, si_p_rel
+        )
 
     # 8. LN sigmoid → firing rates
     nl = cfg.rgc_nl

@@ -23,6 +23,19 @@ class SimState:
 
     time: float = 0.0
 
+    # Spatial heterogeneity: maps rebuilt when heterogeneity_dirty (see pipeline.tick)
+    heterogeneity_dirty: bool = True
+    scatter_cone_to_bipolar: np.ndarray | None = None
+    scatter_bipolar_to_rgc: np.ndarray | None = None
+    scatter_amacrine_to_bipolar: np.ndarray | None = None
+    type_map: np.ndarray | None = None
+    eccentricity_rf_scale_map: np.ndarray | None = None
+    eccentricity_bin_map: np.ndarray | None = None
+    eccentricity_bin_rep_scale: np.ndarray | None = None
+    voronoi_cell_id: np.ndarray | None = None
+    voronoi_centers_xy: np.ndarray | None = None
+    mosaic_n_cells: int = 0
+
     # Stimulus
     stimulus_params: Dict[str, float] = field(default_factory=dict)
     stimulus_spectrum: np.ndarray | None = None  # (H, W, L)
@@ -93,6 +106,12 @@ class SimState:
     def ensure_initialized(self) -> None:
         """Allocate empty arrays if they have not been created yet."""
         h, w = self.grid_shape()
+        if self.type_map is not None and self.type_map.shape != (h, w):
+            self.heterogeneity_dirty = True
+        if self.scatter_cone_to_bipolar is not None and self.scatter_cone_to_bipolar.shape != (h, w):
+            self.heterogeneity_dirty = True
+        if self.voronoi_cell_id is not None and self.voronoi_cell_id.shape != (h, w):
+            self.heterogeneity_dirty = True
         zero = lambda: np.zeros((h, w), dtype=np.float32)
 
         for name in [
