@@ -1,0 +1,160 @@
+Visual-Receptive-Sim: Repository Outline for External LLM Brainstorming
+Date: 2026-04-11
+
+============================================================
+1) Project Goal
+============================================================
+This repository is an interactive retinal circuit simulator focused on visual signal flow:
+
+Stimulus -> cones (L/M/S) -> horizontal feedback -> bipolar ON/OFF -> amacrine inhibition -> RGC drive -> firing rates
+
+The app is designed to combine:
+- biologically motivated retinal modeling,
+- real-time visual inspection of layer activity,
+- and rapid experimentation via GUI controls.
+
+Primary use case: explore how stimulus properties and circuit parameters change intermediate retinal layers and ganglion-cell output.
+
+============================================================
+2) What the App Does Today
+============================================================
+- Runs a vectorized simulation pipeline over a retinal grid (default 256x256).
+- Supports multiple stimuli (spot, annulus, bar, grating, checkerboard, image-based, etc.).
+- Models cone spectral response from fundamentals in data/cone_fundamentals.csv.
+- Includes lateral pooling/feedback and LN-style nonlinearity for RGC firing rates.
+- Shows outputs in:
+  - 2D heatmap (single layer),
+  - 2D all-layers mosaic,
+  - click-to-inspect connectivity details in the Inspector panel.
+- Exports screenshot PNG, layer stats CSV, and per-layer NPY arrays.
+- Has a solid pytest suite covering biology assumptions, pipeline behavior, rendering utilities, config/state, and exports.
+
+============================================================
+3) High-Level Architecture
+============================================================
+Entry point:
+- main.py -> src.gui.app.run_app()
+
+Core package:
+- src/
+  - config.py
+    - biological/simulation defaults (geometry, temporal constants, spectral config, RGC nonlinearity, connectivity weights)
+  - simulation/
+    - pipeline.py: tick() implements stage-by-stage retinal computation
+    - state.py: SimState arrays + initialization/dirty flags
+    - fast_conv.py, fast_layers.py: optimized numeric ops used by pipeline
+    - rf_probe.py: receptive-field probe and DoG fit support
+    - connectivity.py + cell_positions.py: cell pick + connectivity inspection logic
+    - stimulus/: spectral stimulus generation and stimulus types
+    - rgc_population.py + rgc_type_constants.py: optional richer RGC population tuning
+  - rendering/
+    - heatmap.py: scalar/spectral grid -> RGBA conversion
+    - overlay.py: selected-cell overlays in 2D views
+  - gui/
+    - app.py: Dear PyGui app loop, panel wiring, controls, callbacks
+    - panels/: inspector and export panel helpers
+
+Numeric acceleration:
+- hot_numerical/
+  - Cython modules for convolution/layer updates/probe sweep/stimulus fill.
+  - Note: top-level README describes these as important for smooth performance, while hot_numerical/README says not fully integrated yet.
+
+Docs and tests:
+- docs/: Sphinx docs for quickstart, interface, equations, biology context
+- tests/: extensive pytest coverage + performance benchmark scripts
+
+============================================================
+4) Runtime and Dependencies
+============================================================
+Main stack:
+- NumPy, SciPy, Numba
+- Dear PyGui (UI)
+- colour-science, Pillow, scikit-image, matplotlib
+- Cython + setuptools (for hot numerical extensions)
+
+Typical setup/run:
+1. pip install -r requirements.txt
+2. Optional/likely performance-related: build Cython extensions in hot_numerical/
+3. python main.py
+
+Testing:
+- pip install -r requirements.txt -r requirements-test.txt
+- PYTHONPATH=. pytest tests/ -v
+
+============================================================
+5) Current Performance Characteristics
+============================================================
+Performance-sensitive areas (from PERFORMANCE.txt and code structure):
+- Simulation tick in src/simulation/pipeline.py
+- 2D all-layers compositing and color mapping
+- Stats/histogram updates and connectivity computation on click
+
+Existing perf controls include:
+- frame/tick throttling env vars,
+- downsampling in rendering path,
+- configurable grid resolution,
+- benchmark script in tests/bench_performance.py
+
+============================================================
+6) Known Issues / Open TODO Signals in Repo
+============================================================
+Top-level README currently lists several outstanding items, including:
+- "update documentation"
+- a traceback in src/gui/app.py where a connectivity weight key can be None
+  (setattr expects a string attribute name)
+- longer-horizon biological feature ideas:
+  - spike-based neurons (instead of rate coding),
+  - ribbon synapse dynamics at cone pedicle,
+  - ON/OFF subunit nonlinear structure,
+  - NWB export for spike trains
+
+============================================================
+7) Brainstorming Targets (High-Value Change Areas)
+============================================================
+A) Model realism upgrades
+- Add adaptation dynamics (short-term depression, gain control, or noise models).
+- Introduce optional spike-generation layer from rate output.
+- Expand color-opponent and RGC subtype behavior validation against literature curves.
+
+B) Numerical/performance improvements
+- Clarify and complete hot_numerical integration path.
+- Evaluate JIT/GPU alternatives for Gaussian pooling and repeated kernels.
+- Add automated perf regression tests with pass/fail thresholds in CI.
+
+C) UX and analysis tooling
+- Better parameter preset management (save/load experiment presets).
+- Add reproducible experiment runner for scripted sweeps (headless mode + report).
+- Improve inspector workflow and experiment observability in 2D views.
+
+D) Data interoperability and outputs
+- Structured experiment metadata export (JSON sidecar + provenance).
+- Optional NWB/HDF5 pipelines for downstream neuroscience analysis tools.
+
+E) Quality and maintainability
+- Resolve doc discrepancies (especially hot_numerical status and run path).
+- Increase test coverage around GUI callback edge cases.
+- Add architecture docs for simulation/rendering boundaries and extension points.
+
+============================================================
+8) Constraints / Design Intent to Preserve
+============================================================
+- Keep real-time interactivity as a first-class requirement.
+- Preserve biologically interpretable layer semantics (do not turn this into a pure black-box model).
+- Maintain both educational explainability (docs/UI clarity) and research-prototyping flexibility.
+- Avoid changes that break export/test workflows without migration notes.
+
+============================================================
+9) Suggested Prompt Context for Another LLM
+============================================================
+Use this repository as a retinal-circuit simulation + visualization platform.
+When proposing changes, prioritize:
+1) one near-term reliability fix,
+2) one measurable performance upgrade,
+3) one biologically meaningful feature extension,
+4) and one UX improvement that makes experiments easier to run repeatedly.
+
+Prefer proposals with:
+- explicit files to modify,
+- expected impact,
+- risk level,
+- and a test/validation plan.

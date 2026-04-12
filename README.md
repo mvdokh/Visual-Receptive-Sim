@@ -2,9 +2,9 @@
 
 ![RGC circuit simulator UI](images/screenshot1.png)
 
-![RGC circuit simulator 3D view](images/screenshot2.png)
+![RGC circuit simulator overview](images/screenshot2.png)
 
-Retinal ganglion cell circuit simulator: stimulus → cones → horizontals → bipolars → amacrines → RGCs. Vectorized NumPy/SciPy pipeline, Cython hotspots, Vispy 3D viewer (embedded in main app), Dear PyGui.
+Retinal ganglion cell circuit simulator: stimulus → cones → horizontals → bipolars → amacrines → RGCs. Vectorized NumPy/SciPy pipeline, Cython hotspots, Dear PyGui.
 
 ## Quick Start
 
@@ -24,12 +24,12 @@ The Cython extensions in `hot_numerical/` are required for smooth 60 FPS (Gaussi
 
 - **Simulation**: L/M/S cone spectral response, horizontal surround, ON/OFF bipolar, amacrine inhibition, LN RGC nonlinearity. 256×256 grid.
 - **Stimuli**: Spot, full-field, annulus, bar, grating, checkerboard. Monochromatic via cone fundamentals (Stockman & Sharpe 2000).
-- **Visualization**: 2D heatmap per layer or 3D stack (Vispy). Click a cell in the viewport to inspect connectivity (RGC, bipolar, amacrine, horizontal).
+- **Visualization**: 2D heatmap per layer or 2D all-layers mosaic. Click a cell in the viewport to inspect connectivity (RGC, bipolar, amacrine, horizontal).
 - **Export**: PNG screenshot, CSV stats, NPY layer grids.
 
 ## Stack
 
-NumPy, SciPy, Cython, Vispy, Dear PyGui, colour-science, Pillow, scikit-image.
+NumPy, SciPy, Cython, Dear PyGui, colour-science, Pillow, scikit-image.
 
 ## Layout
 
@@ -43,10 +43,7 @@ src/
 │   ├── stimulus/       # spectral.py (spot, bar, grating, etc.)
 │   └── rf_probe.py     # Probe sweep, DoG fit
 ├── rendering/
-│   ├── context.py      # ModernGL FBO, render_3d()
-│   ├── heatmap.py      # Grid → RGBA colormaps
-│   └── scene_3d/       # slabs, connectivity, cell_spheres, camera
-├── viewers/            # Vispy 3D viewer (viewer_3d, circuit_tracer, layer_manager)
+│   └── heatmap.py      # Grid → RGBA colormaps
 └── gui/
     ├── app.py          # Dear PyGui main loop, panels
     └── panels/         # data_export, cell_inspector
@@ -66,10 +63,6 @@ TODO:
     setattr(state.config.connectivity_weights, key, max(0.0, min(3.0, value)))
     ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 TypeError: attribute name must be string, not 'NoneType'
-- fix oscilloscope plane
-- fix scale bar plane in 3d viewer
-- fix cell activity contrast in 3d viewer
-- fix circuit selector
 - Spiking neurons instead of rate coding. This unlocks ISI analysis, burst detection, and adaptation phenomena that the rate model completely erases. Libraries: Brian2 or NEST
 - Ribbon synapse dynamics at the cone pedicle
 Cones don't just pass signal linearly — their ribbon synapses have a releasable vesicle pool that depletes and recovers. Adding a simple depression model (Tsodyks-Markram) here would give you light adaptation and contrast gain control

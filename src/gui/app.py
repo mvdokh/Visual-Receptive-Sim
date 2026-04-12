@@ -3,7 +3,7 @@ from __future__ import annotations
 """
 Dear PyGui application wiring together:
 - Simulation state + pipeline
-- ModernGL 3D viewport
+- 2D viewport (single layer or all-layers mosaic)
 - Control / analysis panels
 """
 
@@ -31,9 +31,7 @@ from PIL import Image, ImageDraw, ImageFont
 DISPLAY_SCALE = 4
 
 from src.config import default_config
-from src.rendering.scene_3d.camera import ELEVATION_MAX, DEFAULT_AZIMUTH, DEFAULT_ELEVATION
 from src.rendering.heatmap import (
-    block_average_downsample,
     block_average_downsample_rgba,
     draw_scale_bar_rgba,
     grid_to_rgba,
@@ -54,7 +52,6 @@ from src.simulation.connectivity import (
     compute_rgc_connectivity,
 )
 from src.gui.panels.cell_inspector import update_inspector
-from src.viewers.viewer_3d import HAS_VISPY, VispyViewer3D
 from src.gui.panels.data_export import (
     export_screenshot_png,
     export_layer_grids_csv,
@@ -567,63 +564,19 @@ def _update_stimulus_visibility(stim_type: str, state: SimState | None = None) -
 
 
 def _update_view_mode_ui(mode: str) -> None:
-    """Show/hide controls depending on view mode (2D heatmaps vs 3D stack)."""
-    is_3d = mode == "3D Stack"
-    is_all_layers_2d = mode == "2D All Layers"
-    if dpg.does_item_exist("camera_3d_node"):
-        if is_3d:
-            dpg.show_item("camera_3d_node")
-        else:
-            dpg.hide_item("camera_3d_node")
-    if dpg.does_item_exist("inspection_layer_section"):
-        if is_3d:
-            dpg.show_item("inspection_layer_section")
-        else:
-            dpg.hide_item("inspection_layer_section")
+    """Show/hide controls depending on active 2D mode."""
     # Layer combo is only meaningful in single-layer 2D heatmap mode.
     if dpg.does_item_exist("layer_combo"):
         if mode == "2D Heatmap":
             dpg.show_item("layer_combo")
         else:
             dpg.hide_item("layer_combo")
-    if dpg.does_item_exist("viewer3d_toolbar"):
-        if is_3d:
-            dpg.show_item("viewer3d_toolbar")
-        else:
-            dpg.hide_item("viewer3d_toolbar")
-    if dpg.does_item_exist("inspector_tab"):
-        dpg.configure_item("inspector_tab", show=is_3d)
-
-
-def _reset_camera(preset: str) -> None:
-    viewer = _shared.get("vispy_viewer")
-    if viewer is not None and HAS_VISPY:
-        cam = viewer._camera
-        if preset == "iso":
-            cam.azimuth, cam.elevation, cam.distance = 45.0, 20.0, 12.0
-        elif preset == "top":
-            cam.azimuth, cam.elevation, cam.distance = 0.0, -89.0, 12.0
-        elif preset == "front":
-            cam.azimuth, cam.elevation, cam.distance = 0.0, 0.0, 12.0
-        else:
-            cam.azimuth, cam.elevation, cam.distance = 45.0, 20.0, 12.0
-        if dpg.does_item_exist("camera_azimuth"):
-            dpg.set_value("camera_azimuth", float(cam.azimuth))
-        if dpg.does_item_exist("camera_elevation"):
-            dpg.set_value("camera_elevation", float(cam.elevation))
-        if dpg.does_item_exist("camera_distance"):
-            dpg.set_value("camera_distance", float(cam.distance))
 
 
 def _build_menu_bar() -> None:
     with dpg.menu_bar():
         with dpg.menu(label="File"):
             dpg.add_menu_item(label="Quit", callback=lambda: dpg.stop_dearpygui())
-        with dpg.menu(label="View"):
-            dpg.add_menu_item(label="Reset camera", callback=lambda: _reset_camera("iso"))
-            dpg.add_menu_item(label="Top view", callback=lambda: _reset_camera("top"))
-            dpg.add_menu_item(label="Front view", callback=lambda: _reset_camera("front"))
-            dpg.add_menu_item(label="Isometric view", callback=lambda: _reset_camera("iso"))
         with dpg.menu(label="Simulation"):
             dpg.add_menu_item(label="Pause / Resume")  # placeholder
         with dpg.menu(label="Help"):
@@ -635,7 +588,7 @@ def _build_left_panel(state: SimState) -> None:
         dpg.add_text("View")
         dpg.add_combo(
             label="Mode",
-            items=["2D Heatmap", "2D All Layers", "3D Stack"],
+            items=["2D Heatmap", "2D All Layers"],
             default_value="2D Heatmap",
             tag="view_mode_combo",
             callback=lambda s, a: _update_view_mode_ui(a),
@@ -743,63 +696,6 @@ def _build_left_panel(state: SimState) -> None:
                     tag="stim_wavelength2", callback=lambda s, a: state.stimulus_params.update({"wavelength2_nm": a}))
                 dpg.add_slider_float(label="Secondary intensity", min_value=0.0, max_value=1.0, default_value=1.0,
                     tag="stim_intensity2", callback=lambda s, a: state.stimulus_params.update({"intensity2": a}))
-
-        _panel_section_gap()
-        with dpg.tree_node(label="Camera (3D)", default_open=True, tag="camera_3d_node"):
-            dpg.add_checkbox(label="Show signal flow", default_value=True, tag="show_signal_flow")
-            dpg.add_slider_float(label="Slice position", min_value=-0.5, max_value=0.5, default_value=0.0,
-                tag="slice_position")
-            dpg.add_text("Connectivity types (3D lines)")
-            dpg.add_checkbox(label="Cone to Horizontal", default_value=True, tag="show_cone_to_horizontal")
-            dpg.add_checkbox(label="Cone to Bipolar", default_value=True, tag="show_cone_to_bipolar")
-            dpg.add_checkbox(label="Bipolar to Amacrine", default_value=True, tag="show_bipolar_to_amacrine")
-            dpg.add_checkbox(label="Bipolar to RGC", default_value=True, tag="show_bipolar_to_rgc")
-            dpg.add_combo(
-                label="Fovea / Periphery",
-                items=["Fovea (~1:1 cone to RGC)", "Periphery (up to ~30:1)"],
-                default_value="Fovea (~1:1 cone to RGC)",
-                tag="fovea_periphery_combo",
-            )
-            dpg.add_slider_float(
-                label="Azimuth (rad)",
-                min_value=-3.14,
-                max_value=3.14,
-                default_value=float(DEFAULT_AZIMUTH),
-                tag="camera_azimuth",
-                callback=lambda s, a: _shared.get("vispy_viewer") and setattr(_shared["vispy_viewer"]._camera, "azimuth", a),
-            )
-            dpg.add_slider_float(
-                label="Elevation (rad)",
-                min_value=-ELEVATION_MAX,
-                max_value=ELEVATION_MAX,
-                default_value=float(DEFAULT_ELEVATION),
-                tag="camera_elevation",
-                callback=lambda s, a: _shared.get("vispy_viewer") and setattr(_shared["vispy_viewer"]._camera, "elevation", a),
-            )
-            dpg.add_slider_float(
-                label="Distance",
-                min_value=3.0,
-                max_value=14.0,
-                default_value=6.0,
-                tag="camera_distance",
-                callback=lambda s, a: _shared.get("vispy_viewer") and setattr(_shared["vispy_viewer"]._camera, "distance", a),
-            )
-            with dpg.tree_node(label="Layer visibility", default_open=True):
-                _layer_names = ["Stimulus", "Cones", "Horizontal", "Bipolar", "Amacrine", "RGC"]
-                for name in _layer_names:
-                    with dpg.group(horizontal=True):
-                        dpg.add_checkbox(label=name, default_value=True, tag=f"layer_vis_{name}")
-                        dpg.add_slider_float(width=80, min_value=0.0, max_value=1.0, default_value=0.85, tag=f"layer_opacity_{name}")
-
-        with dpg.group(tag="inspection_layer_section"):
-            _panel_section_gap()
-            dpg.add_text("Inspection layer (viewport click)")
-            dpg.add_combo(
-                label="Coarse layer",
-                items=["RGC", "Cone", "Bipolar", "Horizontal", "Amacrine"],
-                default_value="RGC",
-                tag="pick_layer_combo",
-            )
         _panel_section_gap()
         dpg.add_text("Circuit tuning")
         _build_connectivity_weights_block(state)
@@ -843,7 +739,7 @@ _INPUT_FLOAT_FMT = {"format": "%.3f"}
 
 def _build_connectivity_weights_block(state: SimState) -> None:
     """Synaptic weight editors (also used in left panel)."""
-    dpg.add_text("Weights (0.0 to 3.0). Applied to simulation and 3D lines.")
+    dpg.add_text("Weights (0.0 to 3.0). Applied to simulation connectivity.")
     cw = state.config.connectivity_weights
     rows = [
         ("conn_cone_to_horizontal", "Cone to Horizontal", "cone_to_horizontal"),
@@ -1017,13 +913,6 @@ def _build_cell_params_block(state: SimState) -> None:
             callback=lambda s, a: setattr(cfg.amacrine, "gamma_wide", a),
         )
         dpg.add_text("(Tau shared with narrow pool above)")
-    with dpg.tree_node(label="3D Viewer Display", default_open=False):
-        from src.simulation.bio_constants import CONE_FRAC_L, CONE_FRAC_M, CONE_FRAC_S, ROD_CONE_RATIO
-
-        dpg.add_text(f"L cone fraction: {float(CONE_FRAC_L):.3f}")
-        dpg.add_text(f"M cone fraction: {float(CONE_FRAC_M):.3f}")
-        dpg.add_text(f"S cone fraction: {float(CONE_FRAC_S):.3f}")
-        dpg.add_text(f"Rod : Cone ratio: {float(ROD_CONE_RATIO):.1f}")
     dpg.add_spacer(height=8)
 
 
@@ -1046,7 +935,7 @@ def _randomize_connectivity_weights(state: SimState) -> None:
 
 
 def _build_right_panel(state: SimState) -> None:
-    """Right panel: Stats, Plots, Export, Inspector (3D only)."""
+    """Right panel: Stats, Plots, Export, and Inspector."""
     with dpg.child_window(width=RIGHT_PANEL_WIDTH, height=-1, border=True, autosize_x=False):
         with dpg.tab_bar(tag="right_panel_tabs"):
             with dpg.tab(label="Stats"):
@@ -1104,7 +993,7 @@ def _build_right_panel(state: SimState) -> None:
 
 
 def _build_center_viewport(display_width: int, display_height: int) -> None:
-    """Center panel: displays the simulation heatmap or 3D stack plus 3D toolbar."""
+    """Center panel: displays the simulation heatmap output."""
     # Match padding around the centered image to RGB(16,16,16) — default ChildBg reads as black.
     r, g, b = VIEWPORT_PANEL_BG_RGB_U8
     with dpg.theme(tag=VIEWPORT_AREA_THEME_TAG):
@@ -1115,37 +1004,6 @@ def _build_center_viewport(display_width: int, display_height: int) -> None:
         with dpg.group(horizontal=False):
             # Image tag so we can resize/center each frame; initial size placeholder
             dpg.add_image(VIEWPORT_TEX_TAG, tag=VIEWPORT_IMAGE_TAG, width=400, height=400)
-            # Bottom 3D toolbar (shown only in 3D mode).
-            with dpg.group(horizontal=True, tag="viewer3d_toolbar"):
-                dpg.add_button(label="Zoom -", width=60, callback=lambda: _shared.get("vispy_viewer") and HAS_VISPY and _shared["vispy_viewer"].add_zoom(-0.5))
-                dpg.add_slider_float(
-                    label="",
-                    width=140,
-                    min_value=3.0,
-                    max_value=50.0,
-                    default_value=12.0,
-                    tag="viewer3d_zoom_slider",
-                    callback=lambda s, a: _shared.get("vispy_viewer") and HAS_VISPY and setattr(_shared["vispy_viewer"]._camera, "distance", float(a)),
-                )
-                dpg.add_button(label="Zoom +", width=60, callback=lambda: _shared.get("vispy_viewer") and HAS_VISPY and _shared["vispy_viewer"].add_zoom(+0.5))
-                dpg.add_spacer(width=8)
-                dpg.add_button(label="⟲ Reset", width=70, callback=lambda: _reset_camera("iso"))
-                dpg.add_checkbox(
-                    label="Flat / Sphere",
-                    tag="viewer3d_flat_sphere",
-                    default_value=False,
-                )
-                dpg.add_spacer(width=8)
-                dpg.add_text("Cells:")
-                dpg.add_slider_int(
-                    label="",
-                    width=130,
-                    min_value=1000,
-                    max_value=50000,
-                    default_value=8000,
-                    tag="viewer3d_cells",
-                )
-                dpg.add_checkbox(label="Max density", tag="viewer3d_max_density", default_value=False)
 
     dpg.bind_item_theme(VIEWPORT_AREA_TAG, VIEWPORT_AREA_THEME_TAG)
 
@@ -1330,7 +1188,7 @@ def run_app() -> None:
     display_h = min(MAX_DISPLAY_SIDE, grid_h * DISPLAY_SCALE)
 
     with dpg.texture_registry():
-        # Initialize with dark gray (matches 3D clear color) to avoid flashing on load
+        # Initialize with dark gray to avoid flashing on load
         empty_tex = np.broadcast_to(
             np.asarray(VIEWPORT_BG_RGBA, dtype=np.float32),
             (display_h, display_w, 4),
@@ -1361,7 +1219,7 @@ def run_app() -> None:
             _build_right_panel(state)
 
     _update_stimulus_visibility("spot")  # initial visibility for default type
-    _update_view_mode_ui("2D Heatmap")   # hide 3D-only controls until 3D is selected
+    _update_view_mode_ui("2D Heatmap")
 
     # Apply custom font to main window and globally
     app_font = _shared.get("app_font")
@@ -1374,7 +1232,7 @@ def run_app() -> None:
         dpg.add_text("RGC Circuit Simulator — Python")
         dpg.add_text(
             "First-stage human vision simulator: stimulus -> cones -> horizontals -> bipolars "
-            "-> amacrines -> RGCs, visualized in 3D."
+            "-> amacrines -> RGCs, visualized in layered 2D views."
         )
 
     dpg.create_viewport(
@@ -1509,32 +1367,19 @@ def run_app() -> None:
     _shared["sim_tick_every_n"] = SIM_TICK_EVERY_N
     _shared["sim_tick_counter"] = 0
     _shared["last_frame"] = None
-    _shared["vispy_viewer"] = None
     _shared["connectivity_dirty"] = False
-    _shared["last_mouse_pos"] = None  # for 3D orbit
-    _shared["wheel_delta"] = 0  # accumulated scroll (consumed each frame when viewport hovered)
     _shared["frame_count"] = 0  # for deferred resize at startup
     _shared["rgc_fr_history"] = []  # for sparkline (last 100 ticks)
     _shared["picked_cell"] = None  # (layer_name, cell_id, connectivity_result) or None
     _shared["mouse_was_down"] = False  # for pick click detection
-    _shared["mouse_down_pos"] = None  # (x, y) when button went down; used to avoid pick on 3D drag
+    _shared["mouse_down_pos"] = None  # (x, y) when button went down
     _shared["stats_tick"] = 0  # throttle stats update
-    _shared["debug_3d_prints"] = 0  # limit debug logging for 3D frames
     _shared["all_layers_rgba"] = None  # composite canvas for 2D All Layers view
 
     if not SIM_ON_MAIN_THREAD and state_back is not None:
         threading.Thread(target=_sim_worker, daemon=True).start()
 
-    # Mouse wheel handler for 3D zoom (DPG has no get_mouse_wheel polling)
-    def _on_wheel(sender, app_data):
-        # app_data can be scalar (vertical) or (x, y) tuple
-        delta = app_data if isinstance(app_data, (int, float)) else (app_data[1] if isinstance(app_data, (list, tuple)) and len(app_data) > 1 else app_data)
-        _shared["wheel_delta"] = _shared.get("wheel_delta", 0) + float(delta)
-
-    with dpg.handler_registry():
-        dpg.add_mouse_wheel_handler(callback=_on_wheel)
-
-    # Main loop: step simulation, render via 2D or 3D, blit into DPG dynamic texture.
+    # Main loop: step simulation, render 2D, blit into DPG dynamic texture.
     last_time = dpg.get_total_time()
     while dpg.is_dearpygui_running():
         frame_start = time.perf_counter()
@@ -1564,7 +1409,7 @@ def run_app() -> None:
             )
             dpg.configure_item(VIEWPORT_AREA_TAG, width=center_w)
 
-            # Size and center the heatmap/3D image in the middle panel (max space, centered)
+            # Size and center the image in the middle panel (max space, centered)
             if dpg.does_item_exist(VIEWPORT_IMAGE_TAG):
                 try:
                     rect_min = dpg.get_item_rect_min(VIEWPORT_AREA_TAG)
@@ -1598,12 +1443,12 @@ def run_app() -> None:
             state = _shared["state_front"]
             _shared["state"] = state
 
-        # Click on viewport (2D or 3D) to select cell and show connectivity in Inspector
+        # Click on viewport to select cell and show connectivity in Inspector
         mouse_down_now = dpg.is_mouse_button_down(0)
         if mouse_down_now and not _shared.get("mouse_was_down"):
             _shared["mouse_down_pos"] = dpg.get_mouse_pos()
         if _shared.get("mouse_was_down") and not mouse_down_now and dpg.is_item_hovered(VIEWPORT_IMAGE_TAG):
-            # Only count as pick if mouse barely moved (avoid treating 3D camera drag as pick)
+            # Only count as pick if mouse barely moved.
             down_pos = _shared.get("mouse_down_pos")
             mx, my = dpg.get_mouse_pos()
             is_drag = False
@@ -1664,15 +1509,6 @@ def run_app() -> None:
                                     cache.put(pick_layer, cell_id, result)
                             update_inspector(result, pick_layer)
                             _shared["picked_cell"] = (pick_layer, cell_id, result)
-                            # When in 3D mode, also trigger circuit tracing in Vispy viewer.
-                            try:
-                                view_mode_click = dpg.get_value("view_mode_combo") if dpg.does_item_exist("view_mode_combo") else "2D Heatmap"
-                                if view_mode_click == "3D Stack" and HAS_VISPY and _shared.get("vispy_viewer") is not None:
-                                    viewer = _shared.get("vispy_viewer")
-                                    if viewer is not None:
-                                        viewer.set_selection_from_grid(str(pick_layer), grid_x, grid_y)
-                            except Exception:
-                                pass
                         else:
                             _shared["picked_cell"] = None
                             update_inspector(None, pick_layer if pick_layer is not None else "RGC")
@@ -1681,166 +1517,74 @@ def run_app() -> None:
         _shared["mouse_was_down"] = mouse_down_now
         _shared["mouse_down_pos"] = None if not mouse_down_now else _shared.get("mouse_down_pos")
 
-        # Render: 2D heatmaps (single/all layers) or 3D stack (Vispy)
+        # Render: 2D view modes share the same dynamic texture.
         view_mode = dpg.get_value("view_mode_combo") if dpg.does_item_exist("view_mode_combo") else "2D Heatmap"
-        if view_mode == "3D Stack":
-            # Start with a visible fallback frame so we can always see that
-            # the 3D mode is active, even if Vispy fails.
-            img = np.full((display_h, display_w, 4), [32, 16, 64, 255], dtype=np.uint8)
-            if HAS_VISPY:
-                # Ensure simulation arrays exist so 3D viewer has something to draw.
-                try:
-                    state.ensure_initialized()
-                except Exception:
-                    pass
-                try:
-                    if _shared.get("vispy_viewer") is None:
-                        _shared["vispy_viewer"] = VispyViewer3D(
-                            size=(display_w, display_h),
-                            config=cfg,
-                        )
-                    viewer = _shared["vispy_viewer"]
-                    if viewer._size != (display_w, display_h):
-                        viewer.resize(display_w, display_h)
-                    viewer.update_frame(state)
-                    # Mouse: drag and scroll zoom (same as before)
-                    if dpg.does_item_exist(VIEWPORT_AREA_TAG) and dpg.is_item_hovered(VIEWPORT_AREA_TAG):
-                        pos = dpg.get_mouse_pos()
-                        if dpg.is_mouse_button_down(0):
-                            last = _shared.get("last_mouse_pos")
-                            if last is not None:
-                                dx, dy = pos[0] - last[0], pos[1] - last[1]
-                                viewer.add_drag(dx, dy, sensitivity=0.18)
-                            _shared["last_mouse_pos"] = (pos[0], pos[1])
-                        else:
-                            _shared["last_mouse_pos"] = None
-                        wheel = _shared.get("wheel_delta", 0)
-                        if wheel != 0:
-                            viewer.add_zoom(wheel)
-                            _shared["wheel_delta"] = 0
-                    else:
-                        _shared["last_mouse_pos"] = None
-                    vispy_img = viewer.render()
-                    if isinstance(vispy_img, np.ndarray) and vispy_img.ndim == 3 and vispy_img.shape[2] >= 3:
-                        # Vispy may render at HiDPI resolution (e.g. 2x for Retina),
-                        # which can mismatch the Dear PyGui texture size. Downsample
-                        # to the dynamic texture resolution so it actually displays.
-                        vh, vw = vispy_img.shape[0], vispy_img.shape[1]
-                        if vh != display_h or vw != display_w:
-                            try:
-                                img_pil = Image.fromarray(vispy_img)
-                                vispy_img = np.array(
-                                    img_pil.resize((display_w, display_h), Image.BILINEAR),
-                                    dtype=np.uint8,
-                                )
-                            except Exception:
-                                # Simple stride-based fallback if PIL resize fails
-                                step_y = max(1, vh // display_h)
-                                step_x = max(1, vw // display_w)
-                                vispy_img = vispy_img[::step_y, ::step_x][:display_h, :display_w]
-                        img = vispy_img
-                except Exception as e:
-                    # Minimal stderr logging so we don't crash the UI.
-                    print(f"3D viewer error: {e}")
-            else:
-                # No Vispy: solid fallback color so user still sees 3D mode.
-                img = np.full((display_h, display_w, 4), [6, 6, 15, 255], dtype=np.uint8)
-            # If the 3D image is effectively all black (e.g. GL failed and returned zeros),
-            # fall back to a bright checkerboard so we can visually confirm the 3D path.
-            if isinstance(img, np.ndarray) and img.ndim == 3 and img.shape[2] >= 3:
-                if int(img.max() if img.size else 0) <= 5:
-                    yy, xx = np.indices((display_h, display_w))
-                    checker = ((xx // 32) + (yy // 32)) % 2
-                    debug_img = np.zeros((display_h, display_w, 4), dtype=np.uint8)
-                    debug_img[..., 0] = checker * 255  # red
-                    debug_img[..., 1] = (1 - checker) * 255  # green
-                    debug_img[..., 2] = 0
-                    debug_img[..., 3] = 255
-                    img = debug_img
-            # Lightweight one-time debug print so we can see what's happening.
-            dbg = _shared.get("debug_3d_prints", 0)
-            if dbg < 3 and isinstance(img, np.ndarray):
-                _shared["debug_3d_prints"] = dbg + 1
-                try:
-                    print(
-                        "3D frame stats:",
-                        "shape=", img.shape,
-                        "dtype=", img.dtype,
-                        "min=", int(img.min() if img.size else 0),
-                        "max=", int(img.max() if img.size else 0),
-                        "HAS_VISPY=", HAS_VISPY,
-                    )
-                except Exception:
-                    pass
-            # 3D returns uint8; DPG wants float 0-1
-            tex_data = (img.astype(np.float32) / 255.0).flatten()
+        if view_mode == "2D All Layers":
+            # No layer-specific overlays or convergence notes in composite mode.
+            if dpg.does_item_exist("layer_convergence_note"):
+                dpg.set_value("layer_convergence_note", "")
+            comp_rgba = _render_all_layers_composite(state)
+            rgba = _resize_rgba_to_display(
+                comp_rgba, display_h, display_w, ALL_LAYERS_BG_RGBA
+            )
         else:
-            # 2D view modes share the same dynamic texture; branch on single vs all layers.
-            if view_mode == "2D All Layers":
-                # No layer-specific overlays or convergence notes in composite mode.
-                if dpg.does_item_exist("layer_convergence_note"):
+            # 2D single-layer heatmap: combo value is display label; resolve to internal key.
+            layer_display = dpg.get_value("layer_combo") if dpg.does_item_exist("layer_combo") else LAYER_KEY_TO_DISPLAY.get("RGC Firing (L)", "RGC Firing (L)")
+            layer_name = LAYER_DISPLAY_TO_KEY.get(layer_display, layer_display)
+            if dpg.does_item_exist("layer_convergence_note"):
+                if dpg.does_item_exist("show_convergence_ratios") and dpg.get_value("show_convergence_ratios"):
+                    _set_convergence_note(layer_name)
+                else:
                     dpg.set_value("layer_convergence_note", "")
-                comp_rgba = _render_all_layers_composite(state)
-                rgba = _resize_rgba_to_display(
-                    comp_rgba, display_h, display_w, ALL_LAYERS_BG_RGBA
-                )
+            if layer_name == "Stimulus":
+                rgba = _render_stimulus_rgba(state)
+            elif layer_name in ("Cones L", "Cones M", "Cones S"):
+                # Inverted: activity = 1 - cone; shared max = 1.0 (same as All Layers).
+                cone_L = np.asarray(state.cone_L if state.cone_L is not None else np.zeros(state.grid_shape(), dtype=np.float32), dtype=np.float32).copy()
+                cone_M = np.asarray(state.cone_M if state.cone_M is not None else np.zeros(state.grid_shape(), dtype=np.float32), dtype=np.float32).copy()
+                cone_S = np.asarray(state.cone_S if state.cone_S is not None else np.zeros(state.grid_shape(), dtype=np.float32), dtype=np.float32).copy()
+                if dpg.does_item_exist("biological_scale_2d") and dpg.get_value("biological_scale_2d"):
+                    for key, arr in [("Cones L", cone_L), ("Cones M", cone_M), ("Cones S", cone_S)]:
+                        dkey = LAYER_KEY_TO_DENSITY.get(key)
+                        if dkey and dkey in RELATIVE_DENSITY:
+                            scale = RELATIVE_DENSITY["rgc"] / RELATIVE_DENSITY[dkey]
+                            arr *= scale
+                grid = cone_L if layer_name == "Cones L" else (cone_M if layer_name == "Cones M" else cone_S)
+                grid = 1.0 - np.clip(grid, 0.0, 1.0)
+                rgba = _grid_to_rgba_absolute_firing(grid, 1.0, _get_heatmap_colormap())
             else:
-                # 2D single-layer heatmap: combo value is display label; resolve to internal key.
-                layer_display = dpg.get_value("layer_combo") if dpg.does_item_exist("layer_combo") else LAYER_KEY_TO_DISPLAY.get("RGC Firing (L)", "RGC Firing (L)")
-                layer_name = LAYER_DISPLAY_TO_KEY.get(layer_display, layer_display)
-                if dpg.does_item_exist("layer_convergence_note"):
-                    if dpg.does_item_exist("show_convergence_ratios") and dpg.get_value("show_convergence_ratios"):
-                        _set_convergence_note(layer_name)
-                    else:
-                        dpg.set_value("layer_convergence_note", "")
-                if layer_name == "Stimulus":
-                    rgba = _render_stimulus_rgba(state)
-                elif layer_name in ("Cones L", "Cones M", "Cones S"):
-                    # Inverted: activity = 1 - cone; shared max = 1.0 (same as All Layers).
-                    cone_L = np.asarray(state.cone_L if state.cone_L is not None else np.zeros(state.grid_shape(), dtype=np.float32), dtype=np.float32).copy()
-                    cone_M = np.asarray(state.cone_M if state.cone_M is not None else np.zeros(state.grid_shape(), dtype=np.float32), dtype=np.float32).copy()
-                    cone_S = np.asarray(state.cone_S if state.cone_S is not None else np.zeros(state.grid_shape(), dtype=np.float32), dtype=np.float32).copy()
-                    if dpg.does_item_exist("biological_scale_2d") and dpg.get_value("biological_scale_2d"):
-                        for key, arr in [("Cones L", cone_L), ("Cones M", cone_M), ("Cones S", cone_S)]:
-                            dkey = LAYER_KEY_TO_DENSITY.get(key)
-                            if dkey and dkey in RELATIVE_DENSITY:
-                                scale = RELATIVE_DENSITY["rgc"] / RELATIVE_DENSITY[dkey]
-                                arr *= scale
-                    grid = cone_L if layer_name == "Cones L" else (cone_M if layer_name == "Cones M" else cone_S)
-                    grid = 1.0 - np.clip(grid, 0.0, 1.0)
-                    rgba = _grid_to_rgba_absolute_firing(grid, 1.0, _get_heatmap_colormap())
-                else:
-                    rgba = _render_layer_rgba(state, layer_name)
-                # Overlay: selected RGC dendritic field and cone/bipolar/amacrine scatter
-                picked = _shared.get("picked_cell")
-                if picked is not None and len(picked) >= 3:
-                    _, _, conn_result = picked
-                    if isinstance(conn_result, RGCConnectivityResult):
-                        cp = _shared.get("cell_positions")
-                        if cp is not None:
-                            overlay = draw_cell_overlay(
-                                state.grid_shape(),
-                                cp,
-                                conn_result,
-                                state.config.retina.microns_per_px,
-                            )
-                            mask = overlay[..., 3:4] > 0
-                            rgba = np.where(mask, overlay, rgba)
-                # Scale bar (100 µm default; Masland 2012, Curcio et al. 1992)
-                draw_scale_bar_rgba(
-                    rgba,
-                    microns_per_px=state.config.retina.microns_per_px,
-                    scale_bar_um=float(getattr(state.config.viewer_3d, "scale_bar_um", 100.0)),
-                    position="bottom_left",
-                )
-                # Display: block-average downsample if grid > MAX_DISPLAY_SIDE, else upscale
-                gh, gw = rgba.shape[0], rgba.shape[1]
-                if gh > MAX_DISPLAY_SIDE or gw > MAX_DISPLAY_SIDE:
-                    rgba = block_average_downsample_rgba(rgba, MAX_DISPLAY_SIDE)
-                else:
-                    rgba = np.repeat(np.repeat(rgba, DISPLAY_SCALE, axis=0), DISPLAY_SCALE, axis=1)
-            tex_data = np.ascontiguousarray(rgba.astype(np.float32)).flatten()
-            img = (rgba * 255).astype(np.uint8)
+                rgba = _render_layer_rgba(state, layer_name)
+            # Overlay: selected RGC dendritic field and cone/bipolar/amacrine scatter
+            picked = _shared.get("picked_cell")
+            if picked is not None and len(picked) >= 3:
+                _, _, conn_result = picked
+                if isinstance(conn_result, RGCConnectivityResult):
+                    cp = _shared.get("cell_positions")
+                    if cp is not None:
+                        overlay = draw_cell_overlay(
+                            state.grid_shape(),
+                            cp,
+                            conn_result,
+                            state.config.retina.microns_per_px,
+                        )
+                        mask = overlay[..., 3:4] > 0
+                        rgba = np.where(mask, overlay, rgba)
+            # Scale bar (100 µm default; Masland 2012, Curcio et al. 1992)
+            draw_scale_bar_rgba(
+                rgba,
+                microns_per_px=state.config.retina.microns_per_px,
+                scale_bar_um=float(getattr(state.config.viewer_3d, "scale_bar_um", 100.0)),
+                position="bottom_left",
+            )
+            # Display: block-average downsample if grid > MAX_DISPLAY_SIDE, else upscale
+            gh, gw = rgba.shape[0], rgba.shape[1]
+            if gh > MAX_DISPLAY_SIDE or gw > MAX_DISPLAY_SIDE:
+                rgba = block_average_downsample_rgba(rgba, MAX_DISPLAY_SIDE)
+            else:
+                rgba = np.repeat(np.repeat(rgba, DISPLAY_SCALE, axis=0), DISPLAY_SCALE, axis=1)
+
+        tex_data = np.ascontiguousarray(rgba.astype(np.float32)).flatten()
+        img = (rgba * 255).astype(np.uint8)
 
         _shared["last_frame"] = img
         dpg.set_value(VIEWPORT_TEX_TAG, tex_data)
