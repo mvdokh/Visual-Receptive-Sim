@@ -39,6 +39,7 @@ jobs:
           python packaging/build.py --clean
 
       - name: Collect release files
+        shell: bash
         run: |
           python - <<'PY'
           import platform
