@@ -212,6 +212,15 @@ class ConnectivityWeights:
 
 
 @dataclass
+class SpikeOutputConfig:
+    """Optional Poisson/Bernoulli spike draws from RGC firing-rate maps."""
+
+    enabled: bool = False
+    use_smoothed_rates: bool = True
+    seed: int = 42
+
+
+@dataclass
 class GlobalConfig:
     """Top-level configuration object passed around the app."""
 
@@ -227,6 +236,7 @@ class GlobalConfig:
     spectral: SpectralConfig = field(default_factory=SpectralConfig)
     viewer_3d: Viewer3DConfig = field(default_factory=Viewer3DConfig)
     rgc_population: RGCPopulationConfig = field(default_factory=RGCPopulationConfig)
+    spike_output: SpikeOutputConfig = field(default_factory=SpikeOutputConfig)
 
 
 def default_config() -> GlobalConfig:

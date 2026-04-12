@@ -59,7 +59,7 @@ class CircuitTree:
     # Line segments for rendering
     segments: List[ConnectionSegment] = field(default_factory=list)
 
-    # For inspector: convergence counts, etc.
+    # Convergence counts, etc.
     circuit_data: Dict = field(default_factory=dict)
 
 

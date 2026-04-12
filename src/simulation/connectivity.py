@@ -244,7 +244,7 @@ def compute_cone_connectivity(
     rgc_radius_px = _radius_um_to_px(200.0, cp.microns_per_px)  # parasol reach
     rgc_indices = cp._rgc_tree.query_ball_point([x_px, y_px], r=rgc_radius_px) if cp._rgc_tree else []
     rgc_count = len(rgc_indices)
-    # Store first 50 RGC IDs so inspector can show "which RGCs"
+    # Store first 50 RGC IDs for connectivity summaries
     rgc_ids = list(rgc_indices[:50]) if rgc_indices else []
     return ConeConnectivityResult(
         cell_id=cone_idx,

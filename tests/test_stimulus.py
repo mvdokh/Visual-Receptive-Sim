@@ -65,6 +65,23 @@ def test_stimulus_moving_spot_time(cfg):
     assert not np.allclose(spec0, spec1)
 
 
+def test_stimulus_moving_bar_loop_periodicity(cfg):
+    """Loop motion repeats spectrum every motion_period_s."""
+    T = 1.25
+    params = {
+        "type": "moving_bar",
+        "width_deg": 0.08,
+        "vx_deg_s": 0.4,
+        "vy_deg_s": 0.0,
+        "intensity": 1.0,
+        "motion_mode": "loop",
+        "motion_period_s": T,
+    }
+    spec_a = build_stimulus_spectrum(params, cfg.spectral, (64, 64), time_s=0.37)
+    spec_b = build_stimulus_spectrum(params, cfg.spectral, (64, 64), time_s=0.37 + T)
+    assert np.allclose(spec_a, spec_b)
+
+
 def test_stimulus_dual_spot_two_colors(cfg):
     """Dual spot returns spectrum with two spectral contributions."""
     params = {

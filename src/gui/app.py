@@ -37,27 +37,18 @@ from src.rendering.heatmap import (
     grid_to_rgba,
     spectrum_to_stimulus_rgba,
 )
-from src.rendering.overlay import draw_cell_overlay
-from src.simulation.cell_positions import (
-    CellPositions,
-    pick_nearest_cell_any_layer,
-)
-from src.simulation.connectivity import (
-    ConnectivityCache,
-    RGCConnectivityResult,
-    compute_amacrine_connectivity,
-    compute_bipolar_connectivity,
-    compute_cone_connectivity,
-    compute_horizontal_connectivity,
-    compute_rgc_connectivity,
-)
-from src.gui.panels.cell_inspector import update_inspector
 from src.gui.panels.data_export import (
     export_screenshot_png,
     export_layer_grids_csv,
     export_layer_grids_npy,
 )
 from src.simulation import SimState, tick
+from src.simulation.session_recording import (
+    LoadedSessionRecording,
+    SessionRecordingBuffer,
+    load_session_recording,
+)
+from src.simulation.rgc_type_constants import ALL_RGC_TYPE_KEYS, FUNCTIONAL_GROUPS
 from src.simulation.bio_constants import (
     RELATIVE_DENSITY,
     PHOTORECEPTOR_RGC_RATIO,
@@ -83,6 +74,7 @@ LAYER_ITEMS_2D = [
     ("Bipolar ON", "Bipolar"),
     ("Amacrine", "Amacrine"),
     ("RGC Firing (L)", "RGC"),
+    ("RGC spikes (L)", "RGC spikes"),
 ]
 LAYER_DISPLAY_TO_KEY = {label: key for key, label in LAYER_ITEMS_2D}
 LAYER_KEY_TO_DISPLAY = {key: label for key, label in LAYER_ITEMS_2D}
@@ -96,6 +88,7 @@ LAYER_KEY_TO_DENSITY = {
     "Bipolar ON": "bipolar",
     "Amacrine": "amacrine",
     "RGC Firing (L)": "rgc",
+    "RGC spikes (L)": "rgc",
 }
 
 
@@ -261,6 +254,7 @@ def _render_layer_rgba(state: SimState, layer_name: str) -> np.ndarray:
         "Bipolar ON": (state.bp_diffuse_on, "firing"),
         "Amacrine": (state.amacrine_aii, "firing"),
         "RGC Firing (L)": (state.fr_midget_on_L, "firing"),
+        "RGC spikes (L)": (state.spike_midget_on_L, "firing"),
     }
     layer, _ = layer_map.get(layer_name, (state.fr_midget_on_L, "firing"))
     colormap = _get_heatmap_colormap()
@@ -469,27 +463,6 @@ def _resize_rgba_to_display(
         return out.astype(np.float32)
 
 
-def _ensure_cell_positions(state: SimState) -> CellPositions:
-    """Build or return cached CellPositions for the current grid. Uses cKDTree for O(log N) picks."""
-    cp = _shared.get("cell_positions")
-    grid_size = state.grid_shape()[0]
-    if cp is not None and cp.grid_size == grid_size:
-        return cp
-    cfg = state.config.retina
-    fovea = (grid_size / 2.0, grid_size / 2.0)
-    cp = CellPositions(
-        grid_size=grid_size,
-        microns_per_px=cfg.microns_per_px,
-        fovea_center=fovea,
-    )
-    cone_subsample = 4 if grid_size > 512 else 1  # fewer cone points for huge grids
-    cp.init_default(cone_subsample=cone_subsample)
-    _shared["cell_positions"] = cp
-    if "connectivity_cache" not in _shared:
-        _shared["connectivity_cache"] = ConnectivityCache()
-    return cp
-
-
 def _update_stimulus_visibility(stim_type: str, state: SimState | None = None) -> None:
     """Show/hide stimulus controls based on type so only relevant sliders are visible."""
     state = state or _shared.get("state")
@@ -506,10 +479,22 @@ def _update_stimulus_visibility(stim_type: str, state: SimState | None = None) -
     if state and stim_type in ("moving_spot", "moving_bar", "moving_grating"):
         state.stimulus_params.setdefault("vx_deg_s", 0.5)
         state.stimulus_params.setdefault("vy_deg_s", 0.0)
+        state.stimulus_params.setdefault("motion_mode", "linear")
+        state.stimulus_params.setdefault("motion_period_s", 2.0)
+        state.stimulus_params.setdefault("motion_osc_amp_deg", 0.2)
+        state.stimulus_params.setdefault("motion_osc_hz", 1.0)
         if dpg.does_item_exist("stim_vx"):
             dpg.set_value("stim_vx", state.stimulus_params["vx_deg_s"])
         if dpg.does_item_exist("stim_vy"):
             dpg.set_value("stim_vy", state.stimulus_params["vy_deg_s"])
+        if dpg.does_item_exist("stim_motion_mode"):
+            dpg.set_value("stim_motion_mode", state.stimulus_params["motion_mode"])
+        if dpg.does_item_exist("stim_motion_period"):
+            dpg.set_value("stim_motion_period", state.stimulus_params["motion_period_s"])
+        if dpg.does_item_exist("stim_motion_amp"):
+            dpg.set_value("stim_motion_amp", state.stimulus_params["motion_osc_amp_deg"])
+        if dpg.does_item_exist("stim_motion_hz"):
+            dpg.set_value("stim_motion_hz", state.stimulus_params["motion_osc_hz"])
 
     advanced_tags = [
         "stim_x_deg",
@@ -526,6 +511,10 @@ def _update_stimulus_visibility(stim_type: str, state: SimState | None = None) -
         "stim_y2_deg",
         "stim_wavelength2",
         "stim_intensity2",
+        "stim_motion_mode",
+        "stim_motion_period",
+        "stim_motion_amp",
+        "stim_motion_hz",
     ]
     # Hide everything first
     hide("stim_radius")
@@ -541,9 +530,42 @@ def _update_stimulus_visibility(stim_type: str, state: SimState | None = None) -
         "bar": ["stim_x_deg", "stim_y_deg", "stim_orientation", "stim_width"],
         "grating": ["stim_x_deg", "stim_y_deg", "stim_orientation", "stim_spatial_freq", "stim_phase"],
         "checkerboard": ["stim_x_deg", "stim_y_deg", "stim_width"],
-        "moving_spot": ["stim_radius", "stim_x_deg", "stim_y_deg", "stim_vx", "stim_vy"],
-        "moving_bar": ["stim_x_deg", "stim_y_deg", "stim_orientation", "stim_width", "stim_vx", "stim_vy"],
-        "moving_grating": ["stim_x_deg", "stim_y_deg", "stim_orientation", "stim_spatial_freq", "stim_phase", "stim_vx", "stim_vy"],
+        "moving_spot": [
+            "stim_radius",
+            "stim_x_deg",
+            "stim_y_deg",
+            "stim_vx",
+            "stim_vy",
+            "stim_motion_mode",
+            "stim_motion_period",
+            "stim_motion_amp",
+            "stim_motion_hz",
+        ],
+        "moving_bar": [
+            "stim_x_deg",
+            "stim_y_deg",
+            "stim_orientation",
+            "stim_width",
+            "stim_vx",
+            "stim_vy",
+            "stim_motion_mode",
+            "stim_motion_period",
+            "stim_motion_amp",
+            "stim_motion_hz",
+        ],
+        "moving_grating": [
+            "stim_x_deg",
+            "stim_y_deg",
+            "stim_orientation",
+            "stim_spatial_freq",
+            "stim_phase",
+            "stim_vx",
+            "stim_vy",
+            "stim_motion_mode",
+            "stim_motion_period",
+            "stim_motion_amp",
+            "stim_motion_hz",
+        ],
         "expanding_ring": ["stim_radius", "stim_x_deg", "stim_y_deg"],
         "drifting_grating_full": ["stim_orientation", "stim_spatial_freq", "stim_phase", "stim_vx", "stim_vy"],
         "dual_spot": [
@@ -686,6 +708,38 @@ def _build_left_panel(state: SimState) -> None:
                     tag="stim_vx", callback=lambda s, a: state.stimulus_params.update({"vx_deg_s": a}))
                 dpg.add_slider_float(label="Velocity Y (deg/s)", min_value=-2.0, max_value=2.0, default_value=0.0,
                     tag="stim_vy", callback=lambda s, a: state.stimulus_params.update({"vy_deg_s": a}))
+                dpg.add_combo(
+                    label="Motion mode",
+                    items=["linear", "loop", "oscillate"],
+                    default_value="linear",
+                    tag="stim_motion_mode",
+                    width=-1,
+                    callback=lambda s, a: state.stimulus_params.update({"motion_mode": a}),
+                )
+                dpg.add_slider_float(
+                    label="Loop period (s)",
+                    min_value=0.2,
+                    max_value=20.0,
+                    default_value=2.0,
+                    tag="stim_motion_period",
+                    callback=lambda s, a: state.stimulus_params.update({"motion_period_s": a}),
+                )
+                dpg.add_slider_float(
+                    label="Oscillate amplitude (deg)",
+                    min_value=0.02,
+                    max_value=0.5,
+                    default_value=0.2,
+                    tag="stim_motion_amp",
+                    callback=lambda s, a: state.stimulus_params.update({"motion_osc_amp_deg": a}),
+                )
+                dpg.add_slider_float(
+                    label="Oscillate frequency (Hz)",
+                    min_value=0.05,
+                    max_value=5.0,
+                    default_value=1.0,
+                    tag="stim_motion_hz",
+                    callback=lambda s, a: state.stimulus_params.update({"motion_osc_hz": a}),
+                )
                 dpg.add_slider_float(label="Secondary radius (deg)", min_value=0.02, max_value=0.5, default_value=0.15,
                     tag="stim_radius2", callback=lambda s, a: state.stimulus_params.update({"radius2_deg": a}))
                 dpg.add_slider_float(label="Secondary X (deg)", min_value=-0.5, max_value=0.5, default_value=0.25,
@@ -700,17 +754,117 @@ def _build_left_panel(state: SimState) -> None:
         dpg.add_text("Circuit tuning")
         _build_connectivity_weights_block(state)
         _panel_section_gap()
+        _build_rgc_population_block(state)
+        _panel_section_gap()
+        dpg.add_text("Spike output")
+        dpg.add_checkbox(
+            label="Generate spikes from RGC rates (Poisson)",
+            default_value=state.config.spike_output.enabled,
+            tag="spike_output_enabled",
+            callback=lambda s, a: setattr(state.config.spike_output, "enabled", bool(a)),
+        )
+        dpg.add_checkbox(
+            label="Spikes from smoothed rates (else LN instant)",
+            default_value=state.config.spike_output.use_smoothed_rates,
+            tag="spike_use_smoothed",
+            callback=lambda s, a: setattr(state.config.spike_output, "use_smoothed_rates", bool(a)),
+        )
+        _panel_section_gap()
         dpg.add_text("Cell parameters")
         _build_cell_params_block(state)
 
 
+_CONN_WEIGHT_MIN = -3.0
+_CONN_WEIGHT_MAX = 3.0
+
+
 def _set_conn_weight(state: SimState, key: str, value: float) -> None:
     if hasattr(state.config, "connectivity_weights"):
-        setattr(state.config.connectivity_weights, key, max(0.0, min(3.0, value)))
+        v = max(_CONN_WEIGHT_MIN, min(_CONN_WEIGHT_MAX, float(value)))
+        setattr(state.config.connectivity_weights, key, v)
 
 
 def _set_connectivity_dirty() -> None:
     _shared["connectivity_dirty"] = True
+
+
+def _set_rgc_pop_dirty() -> None:
+    _shared["connectivity_dirty"] = True
+
+
+def _rpc_set_group_scale(state: SimState, group: str, value: float) -> None:
+    state.config.rgc_population.group_scales[group] = max(0.0, min(5.0, float(value)))
+
+
+def _rpc_set_type_weight(state: SimState, type_name: str, value: float) -> None:
+    state.config.rgc_population.type_weight_multipliers[type_name] = max(0.0, min(4.0, float(value)))
+
+
+def _rpc_reset_type_weights(state: SimState) -> None:
+    rpc = state.config.rgc_population
+    for tn in ALL_RGC_TYPE_KEYS:
+        rpc.type_weight_multipliers[tn] = 1.0
+        tag = f"rpc_tw_{tn}"
+        if dpg.does_item_exist(tag):
+            dpg.set_value(tag, 1.0)
+
+
+def _rpc_reset_group_scales(state: SimState) -> None:
+    rpc = state.config.rgc_population
+    for g in FUNCTIONAL_GROUPS:
+        rpc.group_scales[g] = 1.0
+        tag = f"rpc_grp_{g}"
+        if dpg.does_item_exist(tag):
+            dpg.set_value(tag, 1.0)
+
+
+def _build_rgc_population_block(state: SimState) -> None:
+    rpc = state.config.rgc_population
+    dpg.add_text("RGC population (42-type composition; needs enable)")
+    dpg.add_checkbox(
+        label="Enable population modulation",
+        default_value=rpc.enabled,
+        tag="rpc_enabled",
+        callback=lambda s, a: (setattr(rpc, "enabled", bool(a)), _set_rgc_pop_dirty()),
+    )
+    dpg.add_text("Group scales reweight all types in each functional group.")
+    for g in FUNCTIONAL_GROUPS:
+        tag = f"rpc_grp_{g}"
+        dpg.add_slider_float(
+            label=g.replace("_", " "),
+            min_value=0.0,
+            max_value=5.0,
+            default_value=float(rpc.group_scales.get(g, 1.0)),
+            width=-1,
+            tag=tag,
+            callback=lambda s, a, gg=g: (_rpc_set_group_scale(state, gg, a), _set_rgc_pop_dirty()),
+        )
+    dpg.add_button(
+        label="Reset group scales to 1.0",
+        width=-1,
+        callback=lambda: (_rpc_reset_group_scales(state), _set_rgc_pop_dirty()),
+    )
+    with dpg.tree_node(label="Per-type weight multipliers", default_open=False):
+        dpg.add_button(
+            label="Reset all type weights to 1.0",
+            width=-1,
+            callback=lambda: (_rpc_reset_type_weights(state), _set_rgc_pop_dirty()),
+        )
+        with dpg.child_window(height=240, border=True, horizontal_scrollbar=True):
+            for tn in ALL_RGC_TYPE_KEYS:
+                tag = f"rpc_tw_{tn}"
+                dpg.add_input_float(
+                    label=tn,
+                    default_value=float(rpc.type_weight_multipliers.get(tn, 1.0)),
+                    min_value=0.0,
+                    max_value=4.0,
+                    min_clamped=True,
+                    max_clamped=True,
+                    width=200,
+                    tag=tag,
+                    **_CONN_F,
+                    callback=lambda s, a, name=tn: (_rpc_set_type_weight(state, name, a), _set_rgc_pop_dirty()),
+                )
 
 
 def _reset_connectivity_weights(state: SimState) -> None:
@@ -739,7 +893,7 @@ _INPUT_FLOAT_FMT = {"format": "%.3f"}
 
 def _build_connectivity_weights_block(state: SimState) -> None:
     """Synaptic weight editors (also used in left panel)."""
-    dpg.add_text("Weights (0.0 to 3.0). Applied to simulation connectivity.")
+    dpg.add_text("Pathway weights (-3 to 3). Negative inverts/scales inhibitory paths; see pipeline.")
     cw = state.config.connectivity_weights
     rows = [
         ("conn_cone_to_horizontal", "Cone to Horizontal", "cone_to_horizontal"),
@@ -753,8 +907,8 @@ def _build_connectivity_weights_block(state: SimState) -> None:
         dpg.add_input_float(
             label=label,
             default_value=getattr(cw, key),
-            min_value=0.0,
-            max_value=3.0,
+            min_value=_CONN_WEIGHT_MIN,
+            max_value=_CONN_WEIGHT_MAX,
             min_clamped=True,
             max_clamped=True,
             width=140,
@@ -920,7 +1074,11 @@ def _randomize_connectivity_weights(state: SimState) -> None:
     cw = state.config.connectivity_weights
     for key in ("cone_to_horizontal", "cone_to_bipolar", "horizontal_to_cone",
                 "bipolar_to_amacrine", "amacrine_to_bipolar", "bipolar_to_rgc"):
-        setattr(cw, key, random.uniform(0.5, 2.0))
+        setattr(
+            cw,
+            key,
+            random.uniform(_CONN_WEIGHT_MIN, _CONN_WEIGHT_MAX),
+        )
     for tag, key in [
         ("conn_cone_to_horizontal", "cone_to_horizontal"),
         ("conn_cone_to_bipolar", "cone_to_bipolar"),
@@ -935,7 +1093,7 @@ def _randomize_connectivity_weights(state: SimState) -> None:
 
 
 def _build_right_panel(state: SimState) -> None:
-    """Right panel: Stats, Plots, Export, and Inspector."""
+    """Right panel: Stats, Plots, Export, Recording."""
     with dpg.child_window(width=RIGHT_PANEL_WIDTH, height=-1, border=True, autosize_x=False):
         with dpg.tab_bar(tag="right_panel_tabs"):
             with dpg.tab(label="Stats"):
@@ -986,10 +1144,40 @@ def _build_right_panel(state: SimState) -> None:
                 dpg.add_button(label="Save screenshot (PNG)", width=-1, tag="btn_export_png", callback=lambda: dpg.show_item("file_dialog_png"))
                 dpg.add_button(label="Save layer stats (CSV)", width=-1, tag="btn_export_csv", callback=lambda: dpg.show_item("file_dialog_csv"))
                 dpg.add_button(label="Save layer grids (.npy)", width=-1, tag="btn_export_npy", callback=lambda: dpg.show_item("file_dialog_npy"))
-            with dpg.tab(label="Inspector", tag="inspector_tab"):
-                from src.gui.panels.cell_inspector import build_inspector_panel
-
-                build_inspector_panel()
+            with dpg.tab(label="Recording"):
+                dpg.add_text("Capture frames while the sim runs (folder: session_meta.json + session.npz).")
+                dpg.add_checkbox(label="Record", tag="rec_enabled", default_value=False)
+                dpg.add_input_int(
+                    label="Spatial downsample stride",
+                    default_value=4,
+                    min_value=1,
+                    max_value=64,
+                    tag="rec_stride",
+                )
+                dpg.add_button(
+                    label="Save session to folder...",
+                    width=-1,
+                    callback=lambda: dpg.show_item("file_dialog_rec_save"),
+                )
+                dpg.add_button(
+                    label="Load session from folder...",
+                    width=-1,
+                    callback=lambda: dpg.show_item("file_dialog_rec_load"),
+                )
+                dpg.add_checkbox(
+                    label="Playback (pauses live simulation)",
+                    tag="rec_playback",
+                    default_value=False,
+                )
+                dpg.add_slider_int(
+                    label="Frame",
+                    tag="rec_frame_slider",
+                    min_value=0,
+                    max_value=0,
+                    default_value=0,
+                    callback=lambda s, a: _apply_playback_frame(),
+                )
+                dpg.add_text("", tag="rec_status_text", wrap=400)
 
 
 def _build_center_viewport(display_width: int, display_height: int) -> None:
@@ -1136,6 +1324,9 @@ def _sim_worker() -> None:
     target_interval = 1.0 / 60.0
     while True:
         try:
+            if _shared.get("playback_active"):
+                time.sleep(0.016)
+                continue
             back = _shared.get("state_back")
             if back is None:
                 time.sleep(0.016)
@@ -1149,6 +1340,20 @@ def _sim_worker() -> None:
             time.sleep(max(0.0, target_interval - elapsed))
         except Exception:
             time.sleep(0.016)
+
+
+def _apply_playback_frame() -> None:
+    rec = _shared.get("loaded_recording")
+    if not isinstance(rec, LoadedSessionRecording) or rec.n_frames <= 0:
+        return
+    st_front = _shared.get("state_front") or _shared.get("state")
+    if st_front is None or not dpg.does_item_exist("rec_frame_slider"):
+        return
+    idx = int(dpg.get_value("rec_frame_slider"))
+    rec.apply_frame(idx, st_front)
+    st_back = _shared.get("state_back")
+    if st_back is not None and st_back is not st_front:
+        rec.apply_frame(idx, st_back)
 
 
 def run_app() -> None:
@@ -1314,6 +1519,41 @@ def run_app() -> None:
             # Fallback: simple stderr print so the app keeps running.
             print(f"Failed to load stimulus image: {e}")
 
+    def _on_rec_save(sender, app_data) -> None:
+        path = app_data.get("file_path_name") or app_data.get("current_path")
+        if isinstance(path, (list, tuple)) and path:
+            path = path[0]
+        if not path:
+            return
+        buf = _shared.get("rec_buffer")
+        if buf is None:
+            return
+        try:
+            buf.save(Path(path))
+            if dpg.does_item_exist("rec_status_text"):
+                dpg.set_value("rec_status_text", f"Saved to {path}")
+        except OSError as e:
+            print(f"Session save failed: {e}")
+
+    def _on_rec_load(sender, app_data) -> None:
+        path = app_data.get("file_path_name") or app_data.get("current_path")
+        if isinstance(path, (list, tuple)) and path:
+            path = path[0]
+        if not path:
+            return
+        try:
+            loaded = load_session_recording(Path(path))
+            _shared["loaded_recording"] = loaded
+            n = loaded.n_frames
+            if dpg.does_item_exist("rec_frame_slider"):
+                dpg.configure_item("rec_frame_slider", max_value=max(0, n - 1))
+                dpg.set_value("rec_frame_slider", 0)
+            if dpg.does_item_exist("rec_status_text"):
+                dpg.set_value("rec_status_text", f"Loaded {n} frames")
+            _apply_playback_frame()
+        except OSError as e:
+            print(f"Session load failed: {e}")
+
     with dpg.file_dialog(
         callback=_on_png,
         tag="file_dialog_png",
@@ -1359,6 +1599,26 @@ def run_app() -> None:
         dpg.add_file_extension(".jpeg")
         dpg.add_file_extension(".*")
 
+    with dpg.file_dialog(
+        callback=_on_rec_save,
+        tag="file_dialog_rec_save",
+        show=False,
+        modal=True,
+        directory_selector=True,
+        height=520,
+    ):
+        pass
+
+    with dpg.file_dialog(
+        callback=_on_rec_load,
+        tag="file_dialog_rec_load",
+        show=False,
+        modal=True,
+        directory_selector=True,
+        height=520,
+    ):
+        pass
+
     # Shared state for main loop (double-buffer when worker used; else single state)
     _shared["state"] = state  # legacy alias
     _shared["state_front"] = state
@@ -1370,11 +1630,12 @@ def run_app() -> None:
     _shared["connectivity_dirty"] = False
     _shared["frame_count"] = 0  # for deferred resize at startup
     _shared["rgc_fr_history"] = []  # for sparkline (last 100 ticks)
-    _shared["picked_cell"] = None  # (layer_name, cell_id, connectivity_result) or None
-    _shared["mouse_was_down"] = False  # for pick click detection
-    _shared["mouse_down_pos"] = None  # (x, y) when button went down
     _shared["stats_tick"] = 0  # throttle stats update
     _shared["all_layers_rgba"] = None  # composite canvas for 2D All Layers view
+    _shared["rec_buffer"] = SessionRecordingBuffer()
+    _shared["loaded_recording"] = None
+    _shared["rec_prev_enabled"] = False
+    _shared["playback_active"] = False
 
     if not SIM_ON_MAIN_THREAD and state_back is not None:
         threading.Thread(target=_sim_worker, daemon=True).start()
@@ -1430,8 +1691,15 @@ def run_app() -> None:
                     pos=[pos_x, pos_y],
                 )
 
+        playback_active = (
+            _shared.get("loaded_recording") is not None
+            and dpg.does_item_exist("rec_playback")
+            and dpg.get_value("rec_playback")
+        )
+        _shared["playback_active"] = playback_active
+
         # Use display buffer (worker writes here) or single state (sim on main thread)
-        if _shared.get("sim_on_main_thread"):
+        if not playback_active and _shared.get("sim_on_main_thread"):
             state = _shared["state_front"]
             _shared["state"] = state
             # Tick on main thread every Nth frame to keep 60 FPS
@@ -1439,83 +1707,31 @@ def run_app() -> None:
             _shared["sim_tick_counter"] = (ctr + 1) % _shared.get("sim_tick_every_n", 1)
             if ctr == 0:
                 tick(state, min(dt, 1.0 / 30.0))
+        elif not playback_active:
+            state = _shared["state_front"]
+            _shared["state"] = state
         else:
             state = _shared["state_front"]
             _shared["state"] = state
+            _apply_playback_frame()
 
-        # Click on viewport to select cell and show connectivity in Inspector
-        mouse_down_now = dpg.is_mouse_button_down(0)
-        if mouse_down_now and not _shared.get("mouse_was_down"):
-            _shared["mouse_down_pos"] = dpg.get_mouse_pos()
-        if _shared.get("mouse_was_down") and not mouse_down_now and dpg.is_item_hovered(VIEWPORT_IMAGE_TAG):
-            # Only count as pick if mouse barely moved.
-            down_pos = _shared.get("mouse_down_pos")
-            mx, my = dpg.get_mouse_pos()
-            is_drag = False
-            if down_pos is not None:
-                dx, dy = mx - down_pos[0], my - down_pos[1]
-                if dx * dx + dy * dy > 64:  # moved more than 8 px → was a drag
-                    is_drag = True
-            if not is_drag:
+        if not playback_active:
+            rec_buf = _shared.get("rec_buffer")
+            if (
+                rec_buf is not None
+                and dpg.does_item_exist("rec_enabled")
+                and dpg.get_value("rec_enabled")
+            ):
+                if not _shared.get("rec_prev_enabled", False):
+                    rec_buf.clear()
                 try:
-                    rect_min = dpg.get_item_rect_min(VIEWPORT_IMAGE_TAG)
-                    rect_max = dpg.get_item_rect_max(VIEWPORT_IMAGE_TAG)
-                    mx, my = dpg.get_mouse_pos()
-                    local_x = mx - rect_min[0]
-                    local_y = my - rect_min[1]
-                    img_w = max(1, rect_max[0] - rect_min[0])
-                    img_h = max(1, rect_max[1] - rect_min[1])
-                    if 0 <= local_x < img_w and 0 <= local_y < img_h:
-                        cp = _ensure_cell_positions(state)
-                        grid_h, grid_w = state.grid_shape()
-                        view_mode_click = dpg.get_value("view_mode_combo") if dpg.does_item_exist("view_mode_combo") else "2D Heatmap"
-                        if view_mode_click == "2D All Layers":
-                            comp_w = 4 * grid_w
-                            comp_h = 2 * grid_h
-                            cx = local_x / img_w * comp_w
-                            cy = local_y / img_h * comp_h
-                            tile_w = grid_w
-                            tile_h = grid_h
-                            # Map click within any tile back to underlying grid coordinates.
-                            intra_x = cx - tile_w * float(int(cx // tile_w))
-                            intra_y = cy - tile_h * float(int(cy // tile_h))
-                            grid_x = intra_x
-                            grid_y = intra_y
-                        else:
-                            grid_x = local_x / img_w * grid_w
-                            grid_y = local_y / img_h * grid_h
-                        pick_radius_px = max(20.0, grid_w / 64.0)  # scale with grid so large fields are pickable
-                        pick_layer, cell_id = pick_nearest_cell_any_layer(cp, grid_x, grid_y, pick_radius_px)
-                        cache = _shared.get("connectivity_cache")
-                        result = None
-                        if pick_layer is not None and cell_id is not None and cache is not None:
-                            result = cache.get(pick_layer, cell_id)
-                            if result is None:
-                                fovea = (grid_w / 2.0, grid_h / 2.0)
-                                microns_per_px = state.config.retina.microns_per_px
-                                if pick_layer == "RGC":
-                                    fr = float(state.fr_parasol_on[int(np.clip(grid_y, 0, grid_h - 1)), int(np.clip(grid_x, 0, grid_w - 1))]) if state.fr_parasol_on is not None else 0.0
-                                    result = compute_rgc_connectivity(cp, cell_id, fovea, firing_rate=fr)
-                                elif pick_layer == "Cone":
-                                    result = compute_cone_connectivity(cp, cell_id, fovea)
-                                elif pick_layer == "Bipolar":
-                                    act = float(state.bp_diffuse_on[int(np.clip(grid_y, 0, grid_h - 1)), int(np.clip(grid_x, 0, grid_w - 1))]) if state.bp_diffuse_on is not None else 0.0
-                                    result = compute_bipolar_connectivity(cp, cell_id, activation=act)
-                                elif pick_layer == "Horizontal":
-                                    result = compute_horizontal_connectivity(cp, cell_id)
-                                elif pick_layer == "Amacrine":
-                                    result = compute_amacrine_connectivity(cp, cell_id)
-                                if result is not None:
-                                    cache.put(pick_layer, cell_id, result)
-                            update_inspector(result, pick_layer)
-                            _shared["picked_cell"] = (pick_layer, cell_id, result)
-                        else:
-                            _shared["picked_cell"] = None
-                            update_inspector(None, pick_layer if pick_layer is not None else "RGC")
-                except Exception:
-                    pass
-        _shared["mouse_was_down"] = mouse_down_now
-        _shared["mouse_down_pos"] = None if not mouse_down_now else _shared.get("mouse_down_pos")
+                    rec_buf.stride = max(1, int(dpg.get_value("rec_stride")))
+                except (TypeError, ValueError):
+                    rec_buf.stride = 4
+                rec_buf.append_frame(state)
+        _shared["rec_prev_enabled"] = (
+            bool(dpg.get_value("rec_enabled")) if dpg.does_item_exist("rec_enabled") else False
+        )
 
         # Render: 2D view modes share the same dynamic texture.
         view_mode = dpg.get_value("view_mode_combo") if dpg.does_item_exist("view_mode_combo") else "2D Heatmap"
@@ -1554,21 +1770,6 @@ def run_app() -> None:
                 rgba = _grid_to_rgba_absolute_firing(grid, 1.0, _get_heatmap_colormap())
             else:
                 rgba = _render_layer_rgba(state, layer_name)
-            # Overlay: selected RGC dendritic field and cone/bipolar/amacrine scatter
-            picked = _shared.get("picked_cell")
-            if picked is not None and len(picked) >= 3:
-                _, _, conn_result = picked
-                if isinstance(conn_result, RGCConnectivityResult):
-                    cp = _shared.get("cell_positions")
-                    if cp is not None:
-                        overlay = draw_cell_overlay(
-                            state.grid_shape(),
-                            cp,
-                            conn_result,
-                            state.config.retina.microns_per_px,
-                        )
-                        mask = overlay[..., 3:4] > 0
-                        rgba = np.where(mask, overlay, rgba)
             # Scale bar (100 µm default; Masland 2012, Curcio et al. 1992)
             draw_scale_bar_rgba(
                 rgba,

@@ -60,21 +60,10 @@ concrete ways to speed the program up.
     length or histogram bins.
 
 --------------------------------------------------------------------------------
-5. Cell pick (connectivity on click)
---------------------------------------------------------------------------------
-  - On viewport click, pick_nearest_cell_any_layer() then compute_rgc_connectivity()
-    or compute_cone_connectivity() (and similar for other layers). Connectivity
-    uses CellPositions and can do a lot of indexing and weighting.
-  - Speedups: ConnectivityCache is already used to avoid recomputing the same
-    cell; ensure cache is effective and consider increasing its size or
-    persistence. Defer connectivity computation to a background thread so the
-    UI does not stall on click (show “Loading…” then fill in when ready).
-
---------------------------------------------------------------------------------
-6. General
+5. General
 --------------------------------------------------------------------------------
   - Run the benchmark: python tests/bench_performance.py (or pytest tests/bench_performance.py -v -s)
-    to see where time is spent (tick, 2D render, downsample, connectivity).
+    to see where time is spent (tick, 2D render, downsample, optional benchmarks).
   - Profile: python -m cProfile -o out.prof main.py (or similar), then inspect
     with pstats or a visual profiler to find the top hotspots.
   - Lower grid resolution in config is the single largest lever: half resolution

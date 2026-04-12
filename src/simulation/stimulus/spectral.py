@@ -27,6 +27,9 @@ Parameters:
 - phase_deg: grating phase
 - inner_radius_deg: annulus inner radius
 - vx_deg_s, vy_deg_s: velocity (deg/s) for moving_* types
+- motion_mode: "linear" | "loop" | "oscillate" for moving_* (default linear)
+- motion_period_s: for loop, use time_s modulo this period (repeats motion segment)
+- motion_osc_amp_deg, motion_osc_hz: for oscillate, sinusoidal offset along velocity direction
 - wavelength2_nm, intensity2: secondary color for dual_spot
 - x2_deg, y2_deg, radius2_deg: secondary spot geometry for dual_spot
 """
@@ -115,6 +118,10 @@ def build_stimulus_spectrum(
     inner_radius_deg = float(params.get("inner_radius_deg", 0.05))
     vx_deg_s = float(params.get("vx_deg_s", 0.0))
     vy_deg_s = float(params.get("vy_deg_s", 0.0))
+    motion_mode = str(params.get("motion_mode", "linear")).strip().lower()
+    motion_period_s = float(params.get("motion_period_s", 0.0))
+    motion_osc_amp_deg = float(params.get("motion_osc_amp_deg", 0.2))
+    motion_osc_hz = float(params.get("motion_osc_hz", 1.0))
 
     # Secondary object (dual_spot)
     wavelength2_nm = float(params.get("wavelength2_nm", 450.0))
@@ -164,8 +171,22 @@ def build_stimulus_spectrum(
     cx = x_deg
     cy = y_deg
     if stim_type in {"moving_spot", "moving_bar", "moving_grating"}:
-        cx = x_deg + vx_deg_s * time_s
-        cy = y_deg + vy_deg_s * time_s
+        t_eff = float(time_s)
+        if motion_mode == "loop" and motion_period_s > 1e-9:
+            t_eff = time_s % motion_period_s
+        if motion_mode == "oscillate":
+            spd = float(np.hypot(vx_deg_s, vy_deg_s))
+            if spd < 1e-9:
+                ox, oy = 1.0, 0.0
+            else:
+                ox, oy = vx_deg_s / spd, vy_deg_s / spd
+            phase = 2.0 * np.pi * motion_osc_hz * time_s
+            off = motion_osc_amp_deg * np.sin(phase)
+            cx = x_deg + ox * off
+            cy = y_deg + oy * off
+        else:
+            cx = x_deg + vx_deg_s * t_eff
+            cy = y_deg + vy_deg_s * t_eff
 
     Xc = X - cx
     Yc = Y - cy

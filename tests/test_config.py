@@ -52,6 +52,7 @@ def test_global_config_has_all_subconfigs():
     assert hasattr(cfg, "horizontal") and cfg.horizontal.alpha_lm == 0.7
     assert hasattr(cfg, "connectivity_weights")
     assert hasattr(cfg, "rgc_population") and cfg.rgc_population.enabled is False
+    assert hasattr(cfg, "spike_output") and cfg.spike_output.enabled is False
 
 
 def test_retina_geometry_microns_and_large_field():

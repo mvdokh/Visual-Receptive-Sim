@@ -49,6 +49,16 @@ def test_tick_connectivity_weights_scale_response(state):
     assert float(np.mean(state.fr_midget_on_L)) == pytest.approx(60.0, abs=2.0)
 
 
+def test_negative_connectivity_weight_tick_stable(state):
+    """Signed pathway weights do not break the pipeline."""
+    state.ensure_initialized()
+    state.stimulus_params = {"type": "full_field", "intensity": 0.5}
+    state.config.connectivity_weights.horizontal_to_cone = -1.5
+    state.config.connectivity_weights.amacrine_to_bipolar = -0.5
+    tick(state, 0.05)
+    assert np.all(np.isfinite(state.fr_midget_on_L))
+
+
 def test_cone_to_horizontal_scales_horizontal_activation(state):
     """cone_to_horizontal multiplies cone drive into the horizontal pool; 0 suppresses h_activation."""
     state.ensure_initialized()

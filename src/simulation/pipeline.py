@@ -275,6 +275,20 @@ def tick(state: SimState, dt: float) -> None:
         "fr_parasol_on": cfg.temporal.rgc_tau,
         "fr_parasol_off": cfg.temporal.rgc_tau,
     }
+    spo = getattr(cfg, "spike_output", None)
+    spike_enabled = spo is not None and bool(spo.enabled)
+    use_smooth_spikes = spike_enabled and bool(getattr(spo, "use_smoothed_rates", True))
+    fr_ln_for_spikes: dict[str, np.ndarray] | None = None
+    if spike_enabled and not use_smooth_spikes:
+        fr_ln_for_spikes = {
+            "fr_midget_on_L": np.asarray(state.fr_midget_on_L, dtype=np.float32).copy(),
+            "fr_midget_off_L": np.asarray(state.fr_midget_off_L, dtype=np.float32).copy(),
+            "fr_midget_on_M": np.asarray(state.fr_midget_on_M, dtype=np.float32).copy(),
+            "fr_midget_off_M": np.asarray(state.fr_midget_off_M, dtype=np.float32).copy(),
+            "fr_parasol_on": np.asarray(state.fr_parasol_on, dtype=np.float32).copy(),
+            "fr_parasol_off": np.asarray(state.fr_parasol_off, dtype=np.float32).copy(),
+        }
+
     for attr in SMOOTHED_LAYERS:
         tau = tau_map.get(attr, cfg.temporal.rgc_tau)
         alpha = float(dt / max(tau, 1e-6))
@@ -285,6 +299,45 @@ def tick(state: SimState, dt: float) -> None:
         # prev mutated in-place by temporal_rc
         state.smoothed[attr] = prev
         setattr(state, attr, prev)
+
+    if spike_enabled:
+        if state.spike_rng is None:
+            state.spike_rng = np.random.default_rng(int(getattr(spo, "seed", 42)))
+        rng = state.spike_rng
+
+        def _bernoulli_spikes(rate_grid: np.ndarray) -> np.ndarray:
+            r = np.maximum(np.asarray(rate_grid, dtype=np.float64), 0.0)
+            p = 1.0 - np.exp(-r * float(dt))
+            p = np.clip(p, 0.0, 1.0)
+            u = rng.random(r.shape, dtype=np.float64)
+            return (u < p).astype(np.float32)
+
+        def _src(name: str) -> np.ndarray:
+            if use_smooth_spikes:
+                return getattr(state, name)
+            assert fr_ln_for_spikes is not None
+            return fr_ln_for_spikes[name]
+
+        state.spike_midget_on_L = _bernoulli_spikes(_src("fr_midget_on_L"))
+        state.spike_midget_off_L = _bernoulli_spikes(_src("fr_midget_off_L"))
+        state.spike_midget_on_M = _bernoulli_spikes(_src("fr_midget_on_M"))
+        state.spike_midget_off_M = _bernoulli_spikes(_src("fr_midget_off_M"))
+        state.spike_parasol_on = _bernoulli_spikes(_src("fr_parasol_on"))
+        state.spike_parasol_off = _bernoulli_spikes(_src("fr_parasol_off"))
+    else:
+        z = getattr(state, "spike_midget_on_L", None)
+        if z is not None:
+            for nm in (
+                "spike_midget_on_L",
+                "spike_midget_off_L",
+                "spike_midget_on_M",
+                "spike_midget_off_M",
+                "spike_parasol_on",
+                "spike_parasol_off",
+            ):
+                arr = getattr(state, nm, None)
+                if arr is not None:
+                    arr.fill(0.0)
 
     # 11. Mark all textures dirty
     for key in state.dirty_flags:

@@ -24,7 +24,7 @@ The Cython extensions in `hot_numerical/` are required for smooth 60 FPS (Gaussi
 
 - **Simulation**: L/M/S cone spectral response, horizontal surround, ON/OFF bipolar, amacrine inhibition, LN RGC nonlinearity. 256×256 grid.
 - **Stimuli**: Spot, full-field, annulus, bar, grating, checkerboard. Monochromatic via cone fundamentals (Stockman & Sharpe 2000).
-- **Visualization**: 2D heatmap per layer or 2D all-layers mosaic. Click a cell in the viewport to inspect connectivity (RGC, bipolar, amacrine, horizontal).
+- **Visualization**: 2D heatmap per layer or 2D all-layers mosaic.
 - **Export**: PNG screenshot, CSV stats, NPY layer grids.
 
 ## Stack
@@ -46,7 +46,7 @@ src/
 │   └── heatmap.py      # Grid → RGBA colormaps
 └── gui/
     ├── app.py          # Dear PyGui main loop, panels
-    └── panels/         # data_export, cell_inspector
+    └── panels/         # data_export
 
 hot_numerical/          # Cython extensions (convolve_2d, layer_update, stimulus_fill, rf_probe_sweep)
 docs/                   # Sphinx documentation

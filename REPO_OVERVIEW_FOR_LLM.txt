@@ -1,5 +1,5 @@
 Visual-Receptive-Sim: Repository Outline for External LLM Brainstorming
-Date: 2026-04-11
+Date: 2026-04-12
 
 ============================================================
 1) Project Goal
@@ -19,15 +19,31 @@ Primary use case: explore how stimulus properties and circuit parameters change 
 2) What the App Does Today
 ============================================================
 - Runs a vectorized simulation pipeline over a retinal grid (default 256x256).
-- Supports multiple stimuli (spot, annulus, bar, grating, checkerboard, image-based, etc.).
+- Supports multiple stimuli (spot, annulus, bar, grating, checkerboard, moving
+  spot/bar/grating, image-based, etc.). Moving stimuli support motion_mode:
+  linear (default), loop (time modulo motion_period_s), or oscillate (amplitude
+  + Hz along the velocity direction); see src/simulation/stimulus/spectral.py.
 - Models cone spectral response from fundamentals in data/cone_fundamentals.csv.
 - Includes lateral pooling/feedback and LN-style nonlinearity for RGC firing rates.
+- Circuit tuning: six ConnectivityWeights pathway scalars in the GUI, range
+  approximately -3 to +3 (signed scaling); randomize uses the same range.
+- Optional 42-type RGC population: GUI toggle plus per-group scales and per-type
+  weight multipliers (src/gui/app.py); requires rgc_population.enabled=True to
+  affect pipeline modulation (see §3.5).
+- Optional spike layer: GlobalConfig.spike_output — Bernoulli draws from RGC
+  rates (smoothed or LN-instantaneous); 2D layer "RGC spikes (L)" when enabled.
+- Session recording (Recording tab): append frames while sim runs; save folder
+  with session_meta.json + session.npz (times, scalar means, downsampled
+  fr_midget_on_L); load + playback scrubber pauses live sim and restores
+  stimulus params + coarse RGC map (src/simulation/session_recording.py).
 - Shows outputs in:
   - 2D heatmap (single layer),
   - 2D all-layers mosaic,
-  - click-to-inspect connectivity details in the Inspector panel.
+  - (Connectivity inspection via viewport click was removed; connectivity math
+    remains in src/simulation/connectivity.py for benchmarks and tooling.)
 - Exports screenshot PNG, layer stats CSV, and per-layer NPY arrays.
-- Has a solid pytest suite covering biology assumptions, pipeline behavior, rendering utilities, config/state, and exports.
+- Has a solid pytest suite (including stimulus motion, spikes, recording
+  round-trip, RGC population fractions, signed connectivity).
 
 ============================================================
 3) High-Level Architecture
@@ -38,10 +54,15 @@ Entry point:
 Core package:
 - src/
   - config.py
-    - biological/simulation defaults (geometry, temporal constants, spectral config, RGC nonlinearity, connectivity weights)
+    - biological/simulation defaults (geometry, temporal constants, spectral
+      config, RGC nonlinearity, ConnectivityWeights, RGCPopulationConfig,
+      SpikeOutputConfig, viewer_3d, etc.)
   - simulation/
     - pipeline.py: tick() implements stage-by-stage retinal computation
-    - state.py: SimState arrays + initialization/dirty flags
+      (optional spike generation after temporal smoothing)
+    - state.py: SimState arrays (including spike_*), spike RNG, dirty flags
+    - session_recording.py: SessionRecordingBuffer, load_session_recording,
+      LoadedSessionRecording.apply_frame for capture/playback
     - fast_conv.py, fast_layers.py: optimized numeric ops used by pipeline
     - rf_probe.py: receptive-field probe and DoG fit support
     - connectivity.py + cell_positions.py: cell pick + connectivity inspection logic
@@ -52,7 +73,7 @@ Core package:
     - overlay.py: selected-cell overlays in 2D views
   - gui/
     - app.py: Dear PyGui app loop, panel wiring, controls, callbacks
-    - panels/: inspector and export panel helpers
+    - panels/: data export helpers
 
 Numeric acceleration:
 - hot_numerical/
@@ -62,6 +83,40 @@ Numeric acceleration:
 Docs and tests:
 - docs/: Sphinx docs for quickstart, interface, equations, biology context
 - tests/: extensive pytest coverage + performance benchmark scripts
+
+============================================================
+3.5) Two kinds of "weights" (do not conflate)
+============================================================
+A) ConnectivityWeights (src/config.py) — six pathway scalars edited in the GUI as
+   "Circuit tuning": cone_to_horizontal, cone_to_bipolar, horizontal_to_cone,
+   bipolar_to_amacrine, amacrine_to_bipolar, bipolar_to_rgc. These scale terms
+   every tick in src/simulation/pipeline.py. GUI and randomize use a signed
+   range (about -3 to +3); negative values invert or scale inhibitory pathways
+   depending on where they multiply in the equations (see pipeline).
+
+B) RGCPopulationConfig (same file) — optional 42-type composition when
+   rgc_population.enabled is True: group_scales (per functional group) and
+   type_weight_multipliers (per type) feed population_fractions_from_config()
+   in src/simulation/rgc_population.py, which modulates effective RF sizes,
+   amacrine gammas, and r_max scaling. Default is enabled=False (legacy circuit
+   only); until enabled, per-type multipliers have no effect on the pipeline.
+   The left panel exposes enable, eight group sliders, and per-type inputs;
+   changes set connectivity_dirty for 3D line coloring.
+
+============================================================
+3.6) Spatial model: homogeneous 256×256 patch vs real retina
+============================================================
+The simulation grid (default 256×256) applies one vectorized circuit at every
+pixel: the same connectivity rules, pooling radii in degrees, and pathway
+weights everywhere. A single stimulus pattern (e.g. a 256×256 image) drives
+that homogeneous population uniformly.
+
+In tissue, a comparable patch contains a statistical mosaic: varying RGC and
+interneuron densities by type, eccentricity-dependent RF sizes, and local
+wiring. This app approximates mean-field / single-patch dynamics, not a
+spatially resolved type map. The rgc_population block varies global type
+fractions, not per-pixel type identity; a future extension could introduce
+spatial maps of type density or connectivity.
 
 ============================================================
 4) Runtime and Dependencies
@@ -98,22 +153,25 @@ Existing perf controls include:
 ============================================================
 6) Known Issues / Open TODO Signals in Repo
 ============================================================
-Top-level README currently lists several outstanding items, including:
-- "update documentation"
-- a traceback in src/gui/app.py where a connectivity weight key can be None
-  (setattr expects a string attribute name)
-- longer-horizon biological feature ideas:
-  - spike-based neurons (instead of rate coding),
+Top-level README may still list documentation polish items.
+- Session recording does not store full layer stacks or image_mask pixels;
+  playback restores stimulus params (except image content) and a downsampled
+  RGC (L) firing map only — not a full dynamical replay from stored state.
+- Longer-horizon biological / tooling ideas (still open):
+  - full spike-based neuron dynamics (current spikes are a Bernoulli layer on
+    top of existing rate maps, not integrate-and-fire or conductance-based RGCs)
   - ribbon synapse dynamics at cone pedicle,
   - ON/OFF subunit nonlinear structure,
-  - NWB export for spike trains
+  - NWB/HDF5 export for spike trains and structured experiments
 
 ============================================================
 7) Brainstorming Targets (High-Value Change Areas)
 ============================================================
 A) Model realism upgrades
 - Add adaptation dynamics (short-term depression, gain control, or noise models).
-- Introduce optional spike-generation layer from rate output.
+- Extend spike output: refractory period, population-level validation vs rates,
+  or richer spike models beyond Bernoulli on rate × dt (implemented baseline:
+  GlobalConfig.spike_output, pipeline after smoothing, GUI layer "RGC spikes (L)").
 - Expand color-opponent and RGC subtype behavior validation against literature curves.
 
 B) Numerical/performance improvements
@@ -124,10 +182,12 @@ B) Numerical/performance improvements
 C) UX and analysis tooling
 - Better parameter preset management (save/load experiment presets).
 - Add reproducible experiment runner for scripted sweeps (headless mode + report).
-- Improve inspector workflow and experiment observability in 2D views.
+- Improve experiment observability in 2D views (e.g. overlays, region stats).
+- Extend session recording: optional image snapshots, full config snapshot at
+  t=0, denser spatial/temporal capture, or re-simulation from stored stimulus.
 
 D) Data interoperability and outputs
-- Structured experiment metadata export (JSON sidecar + provenance).
+- Broader structured experiment metadata export (beyond per-session recording).
 - Optional NWB/HDF5 pipelines for downstream neuroscience analysis tools.
 
 E) Quality and maintainability

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 
@@ -66,6 +66,14 @@ class SimState:
     fr_parasol_on: LayerGrid | None = None
     fr_parasol_off: LayerGrid | None = None
 
+    # Optional spike samples (0/1) from rate_output when enabled
+    spike_midget_on_L: LayerGrid | None = None
+    spike_midget_off_L: LayerGrid | None = None
+    spike_midget_on_M: LayerGrid | None = None
+    spike_midget_off_M: LayerGrid | None = None
+    spike_parasol_on: LayerGrid | None = None
+    spike_parasol_off: LayerGrid | None = None
+
     # Color opponent signals
     lm_opponent: LayerGrid | None = None
     by_opponent: LayerGrid | None = None
@@ -75,6 +83,8 @@ class SimState:
 
     # Dirty flags to notify renderer which textures need updates
     dirty_flags: Dict[str, bool] = field(default_factory=dict)
+
+    spike_rng: Optional[np.random.Generator] = field(default=None, repr=False)
 
     def grid_shape(self) -> Tuple[int, int]:
         n = self.config.retina.grid_resolution
@@ -113,6 +123,12 @@ class SimState:
             "fr_midget_off_M",
             "fr_parasol_on",
             "fr_parasol_off",
+            "spike_midget_on_L",
+            "spike_midget_off_L",
+            "spike_midget_on_M",
+            "spike_midget_off_M",
+            "spike_parasol_on",
+            "spike_parasol_off",
             "lm_opponent",
             "by_opponent",
         ]:

@@ -40,6 +40,16 @@ def test_population_fractions_from_config_matches_defaults():
         assert tf[k] == pytest.approx(ref[k], abs=1e-6)
 
 
+def test_type_weight_multiplier_skews_fractions():
+    cfg = default_config()
+    rpc = cfg.rgc_population
+    rpc.enabled = True
+    base = population_fractions_from_config(rpc)
+    rpc.type_weight_multipliers["ON_alpha"] = 3.0
+    skewed = population_fractions_from_config(rpc)
+    assert skewed["ON_alpha"] > base["ON_alpha"]
+
+
 def test_cross_type_modulation_identity_at_defaults():
     mod = compute_cross_type_rf_modulation(default_type_fractions())
     assert mod["gamma_aii_scale"] == pytest.approx(1.0, abs=0.05)
