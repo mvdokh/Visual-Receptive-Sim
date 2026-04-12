@@ -779,6 +779,8 @@ _CONN_WEIGHT_MAX = 3.0
 
 
 def _set_conn_weight(state: SimState, key: str, value: float) -> None:
+    if key is None or not isinstance(key, str):
+        return
     if hasattr(state.config, "connectivity_weights"):
         v = max(_CONN_WEIGHT_MIN, min(_CONN_WEIGHT_MAX, float(value)))
         setattr(state.config.connectivity_weights, key, v)
@@ -837,7 +839,7 @@ def _build_rgc_population_block(state: SimState) -> None:
             default_value=float(rpc.group_scales.get(g, 1.0)),
             width=-1,
             tag=tag,
-            callback=lambda s, a, gg=g: (_rpc_set_group_scale(state, gg, a), _set_rgc_pop_dirty()),
+            callback=lambda s, a, *_a, gg=g: (_rpc_set_group_scale(state, gg, a), _set_rgc_pop_dirty()),
         )
     dpg.add_button(
         label="Reset group scales to 1.0",
@@ -863,7 +865,7 @@ def _build_rgc_population_block(state: SimState) -> None:
                     width=200,
                     tag=tag,
                     **_CONN_F,
-                    callback=lambda s, a, name=tn: (_rpc_set_type_weight(state, name, a), _set_rgc_pop_dirty()),
+                    callback=lambda s, a, *_a, name=tn: (_rpc_set_type_weight(state, name, a), _set_rgc_pop_dirty()),
                 )
 
 
@@ -914,7 +916,7 @@ def _build_connectivity_weights_block(state: SimState) -> None:
             width=140,
             tag=tag,
             **_CONN_F,
-            callback=lambda s, a, k=key: (_set_conn_weight(state, k, a), _set_connectivity_dirty()),
+            callback=lambda s, a, *_a, k=key: (_set_conn_weight(state, k, a), _set_connectivity_dirty()),
         )
     dpg.add_button(
         label="Reset weights to 1.0",

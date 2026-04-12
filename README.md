@@ -55,14 +55,6 @@ tests/                  # pytest suite, bench_performance.py
 
 TODO:
 - update documentation
-- Traceback (most recent call last):
-  File "/Users/martindokholyan/Desktop/Visual-Receptive-Sim/src/gui/app.py", line 867, in <lambda>
-    callback=lambda s, a, k=key: (_set_conn_weight(state, k, a), _set_connectivity_dirty()),
-                                  ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
-  File "/Users/martindokholyan/Desktop/Visual-Receptive-Sim/src/gui/app.py", line 813, in _set_conn_weight
-    setattr(state.config.connectivity_weights, key, max(0.0, min(3.0, value)))
-    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-TypeError: attribute name must be string, not 'NoneType'
 - Spiking neurons instead of rate coding. This unlocks ISI analysis, burst detection, and adaptation phenomena that the rate model completely erases. Libraries: Brian2 or NEST
 - Ribbon synapse dynamics at the cone pedicle
 Cones don't just pass signal linearly — their ribbon synapses have a releasable vesicle pool that depletes and recovers. Adding a simple depression model (Tsodyks-Markram) here would give you light adaptation and contrast gain control
