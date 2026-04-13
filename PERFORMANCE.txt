@@ -48,16 +48,17 @@ concrete ways to speed the program up.
     geometry (e.g. points instead of spheres).
 
 --------------------------------------------------------------------------------
-4. Stats (sparkline, histogram, layer stats)
+4. Right panel (Dynamics, Stats, raster)
 --------------------------------------------------------------------------------
-  - _update_stats() runs every 5th frame (stats_tick % 5 == 0). It updates
-    mean FR, L-M / S-(L+M), per-layer mean/std/min/max, RGC sparkline (last
-    100 ticks), and RGC histogram. The histogram is further throttled (every
-    3rd time) and RGC values are subsampled to 2048 points to avoid “too many
-    bins” and slow numpy.histogram on huge arrays.
-  - Speedups: update stats less often (e.g. every 10th frame). Disable
-    sparkline or histogram in the UI when not needed. Reduce sparkline history
-    length or histogram bins.
+  - Dynamics tab: mean-FR sparkline + spatial histogram refresh on a wall-clock
+    interval (default 10 Hz), not every UI frame.
+  - Stats tab + cone/opponent plots: _update_stats() runs every UI frame by
+    default (_STATS_UI_EVERY_N_FRAMES=1). Increase that constant to reduce CPU
+    if the right panel feels heavy.
+  - Spike raster: _update_spike_raster_series() runs every frame so spikes
+    track simulation time; it is not tied to the stats throttle.
+  - Speedups: lower _STATS_UI_EVERY_N_FRAMES, reduce grid resolution, or hide
+    unused plots.
 
 --------------------------------------------------------------------------------
 5. General

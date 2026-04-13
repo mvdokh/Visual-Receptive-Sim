@@ -5,7 +5,8 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 from scipy.signal import fftconvolve
 
-# Rule: if sigma > this many pixels, use FFT convolution (faster for large kernels)
+# σ at or below this (pixels) uses Cython separable blur when built; larger σ uses
+# FFT Gaussian via ``smart_gaussian`` (often faster than ``gaussian_filter`` here).
 SIGMA_FFT_THRESHOLD_PX = 15.0
 
 # Load Cython implementation once at import so hot_numerical is found when run from repo root
@@ -52,24 +53,23 @@ def gaussian_pool_2d(
     arr: np.ndarray, sigma: float, mode: str = "reflect", use_smart: bool = True
 ) -> np.ndarray:
     """
-    Wrapper around a fast Cython separable Gaussian pool, with SciPy fallback.
+    Prefer Cython for small σ; for larger σ use FFT convolution (``smart_gaussian``).
 
-    By default we use SciPy's highly optimized ``gaussian_filter`` which is
-    very fast and well-tested. If you want to force the Cython implementation,
-    set the environment variable ``HOT_NUMERICAL_USE_CYTHON_CONV=1``.
-
-    When use_smart=True (default), sigma > 15 px uses FFT-based convolution
-    for better performance on large-field grids.
+    ``HOT_NUMERICAL_USE_CYTHON_CONV=0`` skips Cython. ``use_smart=False`` skips the FFT
+    path and uses ``gaussian_filter`` for all σ.
     """
     arr_f32 = np.asarray(arr, dtype=np.float32)
 
-    # Use Cython when available (faster for small sigma); set HOT_NUMERICAL_USE_CYTHON_CONV=0 to force SciPy
     use_cython = os.environ.get("HOT_NUMERICAL_USE_CYTHON_CONV", "1") != "0"
-    if use_cython and sigma <= SIGMA_FFT_THRESHOLD_PX and _cython_gaussian_pool_2d is not None:
+    if (
+        use_cython
+        and sigma <= SIGMA_FFT_THRESHOLD_PX
+        and _cython_gaussian_pool_2d is not None
+    ):
         return _cython_gaussian_pool_2d(arr_f32, float(sigma), mode)
 
     if use_smart and sigma > SIGMA_FFT_THRESHOLD_PX:
         return smart_gaussian(arr_f32, sigma, mode=mode)
-    return gaussian_filter(arr_f32, sigma, mode=mode)
+    return gaussian_filter(arr_f32, float(sigma), mode=mode)
 
 

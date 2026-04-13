@@ -29,6 +29,21 @@ from src.simulation.stimulus.spectral import build_stimulus_spectrum
 from src.simulation.fast_conv import gaussian_pool_2d
 from src.simulation.fast_layers import sigmoid_ln, temporal_rc
 
+try:
+    from hot_numerical.grid_ops import spectral_dot_hwl_l_to_hw as _spectral_dot_hwl_l_to_hw
+except ImportError:  # pragma: no cover - optional Cython build
+    _spectral_dot_hwl_l_to_hw = None
+
+
+def _spectral_linear_response(stim: np.ndarray, sens: np.ndarray) -> np.ndarray:
+    """(H,W,L) · sens -> (H,W); Cython when built, else NumPy einsum."""
+    if _spectral_dot_hwl_l_to_hw is not None:
+        return _spectral_dot_hwl_l_to_hw(
+            np.ascontiguousarray(stim, dtype=np.float32),
+            np.ascontiguousarray(sens, dtype=np.float32),
+        )
+    return np.einsum("hwl,l->hw", stim, sens, optimize=True)
+
 
 SMOOTHED_LAYERS: Iterable[str] = [
     "cone_L",
@@ -149,9 +164,9 @@ def tick(state: SimState, dt: float) -> None:
     SENS_M = cfg.spectral.sens_M.astype(np.float32)
     SENS_S = cfg.spectral.sens_S.astype(np.float32)
 
-    linear_L = np.einsum("hwl,l->hw", stim, SENS_L, optimize=True)
-    linear_M = np.einsum("hwl,l->hw", stim, SENS_M, optimize=True)
-    linear_S = np.einsum("hwl,l->hw", stim, SENS_S, optimize=True)
+    linear_L = _spectral_linear_response(stim, SENS_L)
+    linear_M = _spectral_linear_response(stim, SENS_M)
+    linear_S = _spectral_linear_response(stim, SENS_S)
 
     sigma = getattr(cfg.spectral, "cone_saturation_sigma", 0.0)
     if sigma > 0:

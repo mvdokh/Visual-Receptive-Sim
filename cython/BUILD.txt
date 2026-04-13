@@ -1,0 +1,49 @@
+Build optimized extensions (Cython): convolution, LN, stimulus fill,
+grid reductions (``grid_ops``: mean FR, spectral dot hwl·l→hw, FR histogram)
+========================================================================
+
+Prerequisites
+-------------
+- Python 3.10+ with the same venv you use for the app
+- pip packages: cython, numpy (and a C compiler: Xcode CLT on macOS)
+
+One-shot build (from repository root)
+--------------------------------------
+  cd hot_numerical
+  ../.venv/bin/python setup.py build_ext --inplace
+
+Or with ``python3`` / ``pip install cython`` if needed:
+  pip install cython numpy
+  cd hot_numerical && python setup.py build_ext --inplace
+
+Verify
+------
+Python must see the **parent** of the ``hot_numerical`` folder on ``sys.path``.
+
+From repository root:
+
+  cd /path/to/Visual-Receptive-Sim
+  .venv/bin/python -c "from hot_numerical.convolve_2d import gaussian_pool_2d; import numpy as np; print(gaussian_pool_2d(np.ones((8,8),np.float32), 2.0).mean())"
+
+If your shell is still inside ``hot_numerical/``:
+
+  PYTHONPATH=.. ../.venv/bin/python -c "from hot_numerical.convolve_2d import gaussian_pool_2d; import numpy as np; print(gaussian_pool_2d(np.ones((8,8),np.float32), 2.0).mean())"
+
+(Here ``..`` is the repo root; without ``PYTHONPATH=..`` the import fails with
+``No module named 'hot_numerical'`` because the cwd is the package dir itself.)
+
+The venv binary is ``../.venv/bin/python`` from inside ``hot_numerical/``, not
+``.venv/bin/python``.
+
+After editing any ``*.pyx`` file, run ``build_ext --inplace`` again.
+
+Optional: compare sim speed (from repository root)
+-----------------------------------------------------
+  .venv/bin/python cython/benchmark_sim_components.py
+
+Environment (see src/simulation/fast_conv.py):
+  HOT_NUMERICAL_USE_CYTHON_CONV=0   # skip Cython; SciPy only
+  # Small σ uses Cython; large σ uses FFT Gaussian (smart_gaussian).
+
+Recent change: Cython ``convolve_2d`` caps 1D kernel half-width to floor(grid/2) so
+extreme σ cannot allocate huge kernels on small grids.

@@ -1,0 +1,140 @@
+Circuit schematic viewer — bottom third of middle panel
+=========================================================
+
+Goal
+----
+Add a readout (and optionally light interaction) in the **center column** of the main
+window: a **circuit schematic** occupying roughly **the bottom one-third** of that
+middle panel’s height, while the existing heatmap / texture viewport uses the **top
+two-thirds**. The diagram should show:
+
+  • **Cell types** as distinct visual elements (e.g. rounded boxes or icons), each
+    with a **consistent color** (L/M/S cones could share a family hue or be three
+    nodes).
+  • **Directed connections (edges)** between populations that the simulation actually
+    couples (see `ConnectivityWeights` in `src/config.py`: cone↔horizontal,
+    cone→bipolar, bipolar↔amacrine, bipolar→RGC, etc.).
+  • **Numeric weights** on or next to each edge, reflecting the current
+    `state.config.connectivity_weights` values (same numbers as the left-panel
+    sliders).
+
+This file is design/brainstorm only; no implementation commitment.
+
+
+Layout integration (Dear PyGui)
+-------------------------------
+Today the middle slot is essentially: `panel_viewport` → child_window `viewport_area`
+with a **single** `dpg.add_image` for the dynamic texture.
+
+**Option A — Vertical split inside the viewport panel**
+  • Replace the flat “one image” layout with a **column group**:
+      - Top: `child_window` or fixed-height region (~67% of parent client height)
+        containing the existing texture + zoom/pan image.
+      - Bottom: `child_window` (~33% height) dedicated to the schematic.
+  • **Pros:** One panel, clear spatial relationship to the simulation view.
+  • **Cons:** Must compute heights from `get_item_rect_size` / viewport resize
+    callback so the 1/3 split stays correct when the window is resized; texture
+    area height changes (existing letterbox math already depends on that rect).
+
+**Option B — Bottom slot in layout JSON**
+  • Use the existing **`bottom`** slot in `src/gui/layout.py` presets, but only for
+    a **narrow horizontal strip** under the center column (would require layout
+    changes: e.g. a nested row “center = viewport + schematic” vs global bottom
+    bar). More invasive to `presets/*.json`.
+
+**Recommendation:** Start with **Option A** so the schematic is unambiguously “part of
+the middle viewer” and shares the same column width as the heatmap.
+
+
+How to draw the schematic (rendering strategies)
+--------------------------------------------------
+
+1) **Dear PyGui draw layer on a dedicated canvas (preferred first try)**
+   • Use a `dpg.drawlist` or draw primitives in a child window of fixed size.
+   • **Pros:** No extra dependencies; can redraw every frame or only when
+     `connectivity_dirty` / weights change.
+   • **Cons:** Manual layout (node positions in pixel space); edge routing and label
+     placement are tedious but manageable for ~6–10 edges.
+
+2) **Rasterize with Pillow / Cairo → `dpg.add_dynamic_texture`**
+   • Build a small RGBA numpy array (e.g. 800×200), draw nodes and edges with Pillow
+     `ImageDraw` or cairo, upload as a second texture in the bottom third.
+   • **Pros:** Easy text rendering, anti-aliased lines, familiar 2D API.
+   • **Cons:** Texture upload cost if redrawn every frame; fine if redrawn only when
+     weights change or at 5–10 Hz.
+
+3) **Graph layout library (e.g. layered DAG)**
+   • Compute positions in graph space, then map to pixels. For this circuit the
+     graph is small: **hand-tuned positions** (JSON or constants) may beat automatic
+     layout for clarity (feedforward left→right: Photoreceptors → Horizontal &
+     Bipolar → Amacrine → RGC, with feedback arcs drawn as curved paths).
+
+4) **External “node editor” style**
+   • ImGui node editors are not first-class in vanilla Dear PyGui; would imply
+     custom widgets or a separate window. Lower priority unless you want drag
+     repositioning later.
+
+
+Data model (single source of truth)
+-----------------------------------
+  • **Weights:** `SimState.config.connectivity_weights` — mirror the keys already
+    used in `app._set_conn_weight` / circuit panel (`cone_to_horizontal`, …).
+  • **When to refresh:** On the same cadence as connectivity UI updates — e.g. when
+    sliders fire callbacks, set a flag `schematic_dirty` or reuse
+    `_shared["connectivity_dirty"]` and redraw the schematic once.
+  • **Optional:** Show effective sign (inhibitory vs excitatory) with **color** or
+    line style (dashed for negative weights) if you extend semantics beyond
+    magnitude.
+
+**Cell-type palette (example, not prescriptive)**
+  • Cones / photoreceptors: gold or split L/M/S (green / red / blue).
+  • Horizontal: teal; Bipolar: orange; Amacrine: purple; RGC: white or amber.
+  • Use theme-aware RGBA so light/dark themes stay readable (`src/gui/themes`).
+
+
+Visual encoding of weights
+--------------------------
+  • **Text:** `f"{value:.2f}"` near the midpoint of each edge (small font, same as
+    side panel).
+  • **Line width or alpha** scaled by `abs(weight)` (clamped) for at-a-glance
+    strength.
+  • **Min/max legend** under the diagram: “Line width ∝ |weight|” if you use width.
+
+Edge cases
+----------
+  • **Weight = 0:** still show the edge (dotted or gray) or hide it — product choice.
+  • **Very long numbers:** keep 2–3 decimals; negative values clearly signed.
+  • **Resize:** on small widths, stack two rows of nodes or enable horizontal scroll
+    in the bottom `child_window`.
+
+
+Interaction (phase 2)
+---------------------
+  • **Read-only first:** schematic reflects sliders; no editing on the diagram.
+  • Later: **click edge** to focus the corresponding slider in the left panel
+    (highlight or scroll into view).
+
+
+Testing / consistency
+---------------------
+  • Unit test: given a `ConnectivityWeights` dataclass, a pure function returns a
+    list of `(from_id, to_id, label, weight)` for drawing (no DPG).
+  • Snapshot or hash of drawn texture optional for Pillow path.
+
+Files likely touched (when implementing)
+----------------------------------------
+  • `src/gui/panels/viewport.py` — split layout; tags for top/bottom regions.
+  • `src/gui/app.py` — resize handler, redraw trigger, optional `_draw_circuit_schematic`.
+  • New module e.g. `src/gui/circuit_schematic.py` — layout constants + draw logic.
+  • `src/config.py` — already defines `ConnectivityWeights` (no change required for
+    v1).
+
+
+Summary
+-------
+The smallest viable path is: **split the middle panel vertically (67% / 33%)**, draw
+a **fixed-layout directed graph** in the bottom third using either **DPG drawlist** or
+a **Pillow raster** fed by **`state.config.connectivity_weights`**, with **colored
+nodes** for each population and **labeled edges** for weights. Hand-tuned node
+coordinates will look cleaner than auto-layout for the small number of populations
+in this simulator.

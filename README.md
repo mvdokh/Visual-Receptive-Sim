@@ -1,5 +1,5 @@
 <h1>
-  <img src="rgc_simulator_icon.svg" width="42" height="42" alt="RGC Circuit Simulator icon" style="vertical-align: middle; margin-right: 10px;" />
+  <img src="rgc_simulator_icon.svg" width="84" height="84" alt="RGC Circuit Simulator icon" style="vertical-align: middle; margin-right: 10px;" />
   Retinal Circuit Simulator
 </h1>
 

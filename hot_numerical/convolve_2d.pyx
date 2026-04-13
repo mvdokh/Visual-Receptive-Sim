@@ -141,6 +141,13 @@ def gaussian_pool_2d(
     cdef int half = <int>(three_sigma + 0.5)
     if half < 1:
         half = 1
+    # Cap radius so the 1D kernel fits the grid (avoids pathological cost when sigma >> H,W).
+    cdef int max_dim = h if h > w else w
+    cdef int half_cap = <int>(max_dim / 2)
+    if half_cap < 1:
+        half_cap = 1
+    if half > half_cap:
+        half = half_cap
     cdef int size = 2 * half + 1
     cdef int reflect = 1 if mode == "reflect" else 0
 

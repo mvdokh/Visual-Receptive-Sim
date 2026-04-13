@@ -44,6 +44,12 @@ extensions = [
         include_dirs=[np.get_include()],
         extra_compile_args=extra_compile_args,
     ),
+    Extension(
+        "grid_ops",
+        ["grid_ops.pyx"],
+        include_dirs=[np.get_include()],
+        extra_compile_args=extra_compile_args,
+    ),
 ]
 
 setup(

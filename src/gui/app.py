@@ -22,23 +22,86 @@ SIM_ON_MAIN_THREAD = os.environ.get("SIM_ON_MAIN_THREAD", "").strip().lower() in
 # Tick every Nth frame when on main thread to hit 60 FPS (SIM_TICK_EVERY_N=2 → 30 Hz sim)
 SIM_TICK_EVERY_N = max(1, int(os.environ.get("SIM_TICK_EVERY_N", "1")))
 
-# Cap main loop at this FPS to reduce CPU use and keep UI responsive
-TARGET_FPS = 60
-
 import dearpygui.dearpygui as dpg
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-# Upscale factor for display (texture is grid_resolution * DISPLAY_SCALE)
-# 4 = 1024x1024 for a 256 grid: good balance of sharpness vs speed.
+# Upscale factor for display (texture is grid_resolution * DISPLAY_SCALE).
 DISPLAY_SCALE = 4
+# Right-panel Stats tab + cone/opponent plots: update every N UI frames (1 = each frame).
+_STATS_UI_EVERY_N_FRAMES = 1
+# Main loop FPS cap.
+TARGET_FPS = 60
+# PIL: LANCZOS is sharp but slow on megapixel resizes (2D All Layers + letterbox).
+_PIL_FAST_RESAMPLE_PIXELS = 350_000
+# Dynamics tab: mean-FR trace + spatial FR histogram (wall clock), 10 Hz.
+RGC_DYNAMICS_UI_INTERVAL_S = 0.1
 
-from src.config import (
-    EccentricityGradientType,
-    MosaicLayoutType,
-    SpatialHeterogeneityMode,
-    default_config,
-)
+
+def _rgc_grid_mean_fr(arr: np.ndarray) -> float:
+    try:
+        from hot_numerical.grid_ops import mean_f32_2d
+
+        return float(mean_f32_2d(np.ascontiguousarray(arr, dtype=np.float32)))
+    except ImportError:
+        return float(np.mean(arr))
+
+
+def _rgc_fr_hist_plot_data(
+    arr: np.ndarray, *, max_hist_points: int = 2048
+) -> tuple[list[float], list[float], float, float] | None:
+    """
+    Bin centers, bar heights, and x-axis limits for the spatial FR histogram.
+    Uses Cython subsampled 16-bin path when ``hot_numerical.grid_ops`` is built.
+    """
+    try:
+        from hot_numerical.grid_ops import fr_histogram_16bins_subsampled
+
+        counts, e0, e1 = fr_histogram_16bins_subsampled(
+            np.ascontiguousarray(arr, dtype=np.float32), max_hist_points
+        )
+        n = int(counts.shape[0])
+        span = float(e1) - float(e0)
+        w = span / float(n) if n else 1.0
+        xs = [float(e0) + (i + 0.5) * w for i in range(n)]
+        ys = [float(counts[i]) for i in range(n)]
+        return xs, ys, float(e0), float(e1)
+    except ImportError:
+        pass
+    flat = arr.flatten()
+    flat = flat[np.isfinite(flat)]
+    if len(flat) > max_hist_points:
+        step = len(flat) // max_hist_points
+        flat = flat[::step][:max_hist_points]
+    if len(flat) == 0:
+        return None
+    mn, mx = float(np.min(flat)), float(np.max(flat))
+    if not np.isfinite(mn):
+        mn = 0.0
+    if not np.isfinite(mx):
+        mx = mn + 1.0
+    if mx <= mn:
+        mx = mn + 1.0
+        bins = 2
+    else:
+        min_range = max(1e-9, np.finfo(np.float64).tiny * 20)
+        if (mx - mn) < min_range:
+            mx = mn + 1.0
+            bins = 2
+        else:
+            bins = 16
+    try:
+        counts, edges = np.histogram(flat, bins=bins, range=(mn, mx))
+    except ValueError:
+        bins = 2
+        mx = mn + 1.0
+        counts, edges = np.histogram(flat, bins=bins, range=(mn, mx))
+    xs = [(float(edges[i]) + float(edges[i + 1])) / 2 for i in range(bins)]
+    ys = [float(c) for c in counts]
+    return xs, ys, float(edges[0]), float(edges[-1])
+
+
+from src.config import SpatialHeterogeneityMode, default_config
 from src.rendering.heatmap import (
     block_average_downsample_rgba,
     composite_spatial_heterogeneity_overlays,
@@ -46,11 +109,41 @@ from src.rendering.heatmap import (
     grid_to_rgba,
     spectrum_to_stimulus_rgba,
 )
+from src.simulation.stimulus.spectral import build_stimulus_spectrum
+from src.gui.app_context import AppContext
+from src.gui.layout_constants import (
+    ALL_LAYERS_VIEWER_MARGIN_PX,
+    CONN_WEIGHT_MAX,
+    CONN_WEIGHT_MIN,
+    LEFT_STACK_SCROLL_TAG,
+    LEFT_PANEL_FONT_PX,
+    LEFT_PANEL_WIDTH,
+    MIN_VIEWPORT_WIDTH,
+    MIN_WINDOW_SIZE,
+    RIGHT_PANEL_WIDTH,
+    SIDE_COMBO_WIDTH,
+    SIDE_PANEL_TEXT_WRAP,
+    SIDE_SLIDER_WIDTH,
+    SIDE_SPIN_WIDE,
+    SIDE_SPIN_WIDTH,
+    STIM_COMBO_WIDTH,
+    STIM_SLIDER_WIDTH,
+    VIEWPORT_AREA_TAG,
+    VIEWPORT_AREA_THEME_TAG,
+    VIEWPORT_BG_RGBA,
+    VIEWPORT_IMAGE_TAG,
+    VIEWPORT_PANEL_BG_RGB_U8,
+    VIEWPORT_TEX_TAG,
+)
+from src.gui import layout as gui_layout
+from src.gui import settings as user_settings
+from src.gui import themes as gui_themes
 from src.gui.panels.data_export import (
-    export_screenshot_png,
     export_layer_grids_csv,
     export_layer_grids_npy,
+    export_screenshot_png,
 )
+from src.gui.panels.stats_plots import STAT_LAYER_PLOT_ORDER
 from src.simulation import SimState, tick
 from src.simulation.spatial_heterogeneity_maps import rebuild_spatial_heterogeneity
 from src.simulation.session_recording import (
@@ -59,7 +152,6 @@ from src.simulation.session_recording import (
     load_session_recording,
 )
 from src.simulation.bio_constants import (
-    EMPIRICAL_ECCENTRICITY_AVAILABLE,
     RELATIVE_DENSITY,
     PHOTORECEPTOR_RGC_RATIO,
     ROD_CONE_RATIO,
@@ -151,37 +243,6 @@ def _set_convergence_note(layer_name: str) -> None:
     dpg.set_value("layer_convergence_note", notes.get(layer_name, ""))
 
 
-# Side columns (left controls + right stats) share width and the same UI font.
-LEFT_PANEL_WIDTH = 360
-RIGHT_PANEL_WIDTH = LEFT_PANEL_WIDTH
-# Text wrap inside side panels (leave margin vs child_window width).
-SIDE_PANEL_TEXT_WRAP = LEFT_PANEL_WIDTH - 28
-# Sliders and numeric fields: avoid stretching to full column width.
-SIDE_SLIDER_WIDTH = min(158, max(116, LEFT_PANEL_WIDTH - 132))
-# Stimulus block: slightly narrower than other sliders (many controls in one column).
-STIM_SLIDER_WIDTH = min(132, max(100, LEFT_PANEL_WIDTH - 168))
-SIDE_SPIN_WIDTH = 104
-SIDE_SPIN_WIDE = 120
-SIDE_COMBO_WIDTH = min(164, LEFT_PANEL_WIDTH - 72)
-# Stimulus type list includes long names (e.g. drifting_grating_full); keep a few px wider than SIDE_COMBO.
-STIM_COMBO_WIDTH = min(176, LEFT_PANEL_WIDTH - 60)
-# Smaller type in side panels; center viewport keeps the default (main) font size.
-LEFT_PANEL_FONT_PX = 11
-# Minimum size: all three panels (left + center min + right) must fit
-MIN_VIEWPORT_WIDTH = 400
-MIN_WINDOW_SIZE: Tuple[int, int] = (
-    MIN_VIEWPORT_WIDTH + LEFT_PANEL_WIDTH + RIGHT_PANEL_WIDTH,
-    640,
-)
-
-# Center viewport: texture letterbox, empty texture, 2D All Layers canvas, and (via theme) child_window fill
-VIEWPORT_PANEL_BG_RGB_U8: Tuple[int, int, int] = (16, 16, 16)
-_VIEWPORT_PANEL_BG_F = tuple(c / 255.0 for c in VIEWPORT_PANEL_BG_RGB_U8) + (1.0,)
-VIEWPORT_BG_RGBA: Tuple[float, float, float, float] = _VIEWPORT_PANEL_BG_F
-ALL_LAYERS_BG_RGBA: Tuple[float, float, float, float] = _VIEWPORT_PANEL_BG_F
-ALL_LAYERS_STRIP_RGBA: Tuple[float, float, float, float] = _VIEWPORT_PANEL_BG_F
-
-
 def _primary_screen_size_px() -> Optional[Tuple[int, int]]:
     """
     Best-effort physical/logical pixel size of the primary display.
@@ -256,10 +317,6 @@ def _default_window_size() -> Tuple[int, int]:
 
 # Default size before maximize; also used as minimum target in the first frames
 WINDOW_SIZE: Tuple[int, int] = _default_window_size()
-VIEWPORT_TEX_TAG = "rgc_viewport_tex"
-VIEWPORT_AREA_TAG = "viewport_area"
-VIEWPORT_IMAGE_TAG = "viewport_image"
-VIEWPORT_AREA_THEME_TAG = "viewport_area_theme"
 DATA_EXPORTS_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "exports"
 
 # Shared state for export callbacks, RF compute, and mouse orbit (updated each frame)
@@ -267,18 +324,223 @@ _shared: dict = {}
 
 # Max display resolution for 2D viewer (block-average downsampling above this)
 MAX_DISPLAY_SIDE = 1024
+# 2D All Layers composite is letterboxed into the viewport texture; allow a larger
+# bitmap than single-layer mode so wheel-zoom does not upscale a heavily downsampled image.
+MAX_COMPOSITE_TEXTURE_CAP = 2048
 
-# RGC spike raster (right panel): rolling window in sim time, subsampled grid cells.
+try:
+    _PIL_RESAMPLE_HIGH = Image.Resampling.LANCZOS
+    _PIL_RESAMPLE_FAST = Image.Resampling.BILINEAR
+except AttributeError:
+    _PIL_RESAMPLE_HIGH = getattr(Image, "LANCZOS", Image.BILINEAR)
+    _PIL_RESAMPLE_FAST = Image.BILINEAR
+
+
+def _pil_resample(in_h: int, in_w: int, out_h: int, out_w: int):
+    """LANCZOS for small images; bilinear when resizing large bitmaps (viewport / All Layers)."""
+    if in_h * in_w > _PIL_FAST_RESAMPLE_PIXELS or out_h * out_w > _PIL_FAST_RESAMPLE_PIXELS:
+        return _PIL_RESAMPLE_FAST
+    return _PIL_RESAMPLE_HIGH
+
+# RGC spike raster (right panel): rolling window in sim time; one neuron per row (ticks).
 RASTER_TIME_WINDOW_S = 4.0
-RASTER_MAX_POINTS = 55_000
-_RASTER_SPIKE_ATTRS: Tuple[str, ...] = (
-    "spike_midget_on_L",
-    "spike_midget_off_L",
-    "spike_midget_on_M",
-    "spike_midget_off_M",
-    "spike_parasol_on",
-    "spike_parasol_off",
-)
+RASTER_MAX_EVENTS = 200_000
+# Max subsampled neurons (~sqrt rows); stride chosen so grid fits under this cap.
+RASTER_MAX_NEURONS = 576
+# Half-height of each spike tick in neuron-index units (vertical line in plot space).
+RASTER_TICK_HALF_HEIGHT = 0.42
+
+# Center viewer: wheel zoom vs fit-to-panel scale (global handler_registry + viewport hover check).
+VIEWPORT_ZOOM_MIN = 0.25
+VIEWPORT_ZOOM_MAX = 12.0
+VIEWPORT_ZOOM_STEP = 1.12
+VIEWPORT_ZOOM_WHEEL_REG = "viewport_zoom_wheel_reg"
+
+
+def _composite_layout_dims(grid_h: int, grid_w: int) -> tuple[int, int, int, int]:
+    """Native composite size: comp_h, comp_w, label_strip_h, row_gap."""
+    label_strip_h = max(12, min(18, int(grid_h * 0.055)))
+    row_gap = 2
+    comp_w = 3 * grid_w
+    comp_h = 4 * grid_h + 4 * label_strip_h + 3 * row_gap
+    return comp_h, comp_w, label_strip_h, row_gap
+
+
+def _base_panel_widths_from_preset() -> Tuple[int, int]:
+    comp = _shared.get("layout_composer")
+    if comp is not None:
+        lw = int(comp.preset.get("left_width", LEFT_PANEL_WIDTH))
+        rw = int(comp.preset.get("right_width", RIGHT_PANEL_WIDTH))
+        return lw, rw
+    return LEFT_PANEL_WIDTH, RIGHT_PANEL_WIDTH
+
+
+def _apply_side_panel_widths_to_ui(lw: int, rw: int) -> None:
+    """Resize left scroll + panel child_windows and the right stats column."""
+    plw = max(220, int(lw))
+    prw = max(220, int(rw))
+    if dpg.does_item_exist(LEFT_STACK_SCROLL_TAG):
+        dpg.configure_item(LEFT_STACK_SCROLL_TAG, width=plw)
+    for tag in ("panel_circuit_root", "panel_heterogeneity_root"):
+        if dpg.does_item_exist(tag):
+            dpg.configure_item(tag, width=plw)
+    if dpg.does_item_exist("panel_stats_plots_root"):
+        dpg.configure_item("panel_stats_plots_root", width=prw)
+
+
+def _texture_target_hw(state: SimState) -> tuple[int, int]:
+    """Dynamic texture (W, H) large enough for single-layer and All Layers letterboxing."""
+    gh, gw = state.grid_shape()
+    if gh > MAX_DISPLAY_SIDE or gw > MAX_DISPLAY_SIDE:
+        sw, sh = MAX_DISPLAY_SIDE, MAX_DISPLAY_SIDE
+    else:
+        sw = min(MAX_DISPLAY_SIDE, gw * DISPLAY_SCALE)
+        sh = min(MAX_DISPLAY_SIDE, gh * DISPLAY_SCALE)
+    ch, cw, _, _ = _composite_layout_dims(gh, gw)
+    cap = MAX_COMPOSITE_TEXTURE_CAP
+    scale = min(cap / max(cw, 1), cap / max(ch, 1))
+    al_w = max(1, int(round(cw * scale)))
+    al_h = max(1, int(round(ch * scale)))
+    return max(sw, al_w), max(sh, al_h)
+
+
+def _ui_letterbox_rgba() -> Tuple[float, float, float, float]:
+    v = _shared.get("ui_child_bg_rgba", VIEWPORT_BG_RGBA)
+    if isinstance(v, (list, tuple)) and len(v) >= 4:
+        return (float(v[0]), float(v[1]), float(v[2]), float(v[3]))
+    return cast(Tuple[float, float, float, float], tuple(VIEWPORT_BG_RGBA))
+
+
+def _refresh_viewport_chrome_theme_from_tokens(tokens: gui_themes.ThemeTokens) -> None:
+    """Center viewer child_window fill matches theme ChildBg (side panels).
+
+    The theme is created once in ``viewport.build`` with a fixed tag; Dear PyGui
+    rejects recreating that tag (alias still registered). Update existing
+    ``mvThemeColor`` children in place instead of delete/recreate.
+    """
+    if not dpg.does_item_exist(VIEWPORT_AREA_TAG) or not dpg.does_item_exist(VIEWPORT_AREA_THEME_TAG):
+        return
+    rgb = tuple(int(c) for c in tokens.child_bg[:4])
+    rgb_list = list(rgb)
+    try:
+        for si in range(4):
+            comps = dpg.get_item_children(VIEWPORT_AREA_THEME_TAG, si)
+            if not comps:
+                continue
+            for comp in comps:
+                for sj in range(4):
+                    leaves = dpg.get_item_children(comp, sj)
+                    if not leaves:
+                        continue
+                    for leaf in leaves:
+                        try:
+                            dpg.configure_item(leaf, default_value=rgb_list)
+                        except Exception:
+                            try:
+                                dpg.configure_item(leaf, value=rgb_list)
+                            except Exception:
+                                try:
+                                    dpg.set_value(leaf, rgb_list)
+                                except Exception:
+                                    pass
+    except Exception:
+        return
+    try:
+        dpg.bind_item_theme(VIEWPORT_AREA_TAG, VIEWPORT_AREA_THEME_TAG)
+    except Exception:
+        pass
+
+
+def _mouse_wheel_vertical_delta(app_data) -> float:
+    """Normalize Dear PyGui / ImGui wheel payload to a signed step count (≈1 per notch)."""
+    if app_data is None:
+        return 0.0
+    x = app_data
+    if isinstance(x, (list, tuple)):
+        x = x[1] if len(x) > 1 else x[0]
+    elif isinstance(x, dict):
+        x = x.get("MouseWheel", x.get("vertical", x.get("Vertical", 0)))
+    try:
+        raw = float(x)
+    except (TypeError, ValueError):
+        return 0.0
+    if abs(raw) > 10:
+        raw /= 120.0
+    return max(-12.0, min(12.0, raw))
+
+
+def _on_viewport_mouse_wheel(sender, app_data) -> None:
+    # Mouse wheel handlers must live under handler_registry (not item_handler_registry).
+    # Registry is global, so only react when the cursor is over the center viewer.
+    if not dpg.does_item_exist(VIEWPORT_AREA_TAG):
+        return
+    try:
+        over = dpg.is_item_hovered(VIEWPORT_AREA_TAG)
+        if not over and dpg.does_item_exist(VIEWPORT_IMAGE_TAG):
+            over = dpg.is_item_hovered(VIEWPORT_IMAGE_TAG)
+        if not over:
+            return
+    except Exception:
+        return
+    dz = _mouse_wheel_vertical_delta(app_data)
+    if abs(dz) < 1e-6:
+        return
+    z = float(_shared.get("viewport_zoom", 1.0))
+    z *= VIEWPORT_ZOOM_STEP**dz
+    _shared["viewport_zoom"] = max(VIEWPORT_ZOOM_MIN, min(VIEWPORT_ZOOM_MAX, z))
+
+
+def _viewport_hovered() -> bool:
+    if not dpg.does_item_exist(VIEWPORT_AREA_TAG):
+        return False
+    try:
+        if dpg.is_item_hovered(VIEWPORT_AREA_TAG):
+            return True
+        if dpg.does_item_exist(VIEWPORT_IMAGE_TAG) and dpg.is_item_hovered(VIEWPORT_IMAGE_TAG):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _shift_held() -> bool:
+    return bool(dpg.is_key_down(dpg.mvKey_LShift) or dpg.is_key_down(dpg.mvKey_RShift))
+
+
+def _viewport_shift_pan_tick() -> None:
+    """Shift + left-drag: pan the viewer (offset stored in ``viewport_pan_px``)."""
+    if not _shift_held() or not dpg.is_mouse_button_down(dpg.mvMouseButton_Left):
+        _shared["viewport_pan_dragging"] = False
+        _shared["_vp_pan_prev_mouse"] = None
+        return
+    if not _shared.get("viewport_pan_dragging"):
+        if not _viewport_hovered():
+            return
+        _shared["viewport_pan_dragging"] = True
+        mx, my = dpg.get_mouse_pos(local=False)
+        _shared["_vp_pan_prev_mouse"] = [float(mx), float(my)]
+        return
+    mx, my = dpg.get_mouse_pos(local=False)
+    prev = _shared.get("_vp_pan_prev_mouse")
+    if prev is None:
+        _shared["_vp_pan_prev_mouse"] = [float(mx), float(my)]
+        return
+    dx = float(mx) - float(prev[0])
+    dy = float(my) - float(prev[1])
+    _shared["_vp_pan_prev_mouse"] = [float(mx), float(my)]
+    pan = _shared.get("viewport_pan_px", [0.0, 0.0])
+    _shared["viewport_pan_px"] = [float(pan[0]) + dx, float(pan[1]) + dy]
+
+
+def _reset_main_viewer_view() -> None:
+    _shared.update(
+        {
+            "viewport_zoom": 1.0,
+            "viewport_pan_px": [0.0, 0.0],
+            "viewport_pan_dragging": False,
+            "_vp_pan_prev_mouse": None,
+        }
+    )
 
 
 def _toggle_spike_raster_ui(enabled: bool) -> None:
@@ -294,19 +556,47 @@ def _toggle_spike_raster_ui(enabled: bool) -> None:
             dpg.set_value("series_rgc_raster", [[], []])
 
 
+def _raster_spike_attr_for_heatmap() -> str:
+    """Spike grid that matches the 'RGC spikes (L)' 2D heatmap layer."""
+    if not dpg.does_item_exist("layer_combo"):
+        return "spike_midget_on_L"
+    label = str(dpg.get_value("layer_combo"))
+    layer_key = LAYER_DISPLAY_TO_KEY.get(label)
+    if layer_key == "RGC spikes (L)":
+        return "spike_midget_on_L"
+    return "spike_midget_on_L"
+
+
+def _raster_subsample_stride(n: int) -> tuple[int, int, int]:
+    """Stride and subsampled (h, w) so h*w <= RASTER_MAX_NEURONS (row-major matches heatmap)."""
+    max_side = max(8, int(np.sqrt(RASTER_MAX_NEURONS)))
+    stride = max(1, (n + max_side - 1) // max_side)
+    sub_h = (n + stride - 1) // stride
+    sub_w = (n + stride - 1) // stride
+    return stride, sub_h, sub_w
+
+
 def _update_spike_raster_series(state: SimState) -> None:
-    """Append subsampled spike events and refresh the scatter series (time vs cell index)."""
+    """
+    Append subsampled spike events for the same map as the RGC spikes heatmap.
+
+    Each neuron is one horizontal row (y); spikes draw as short vertical ticks in time.
+    Rows use row-major indices with y flipped so row 0 matches the top of the heatmap.
+    Spikes in the same sim step are spread across [t-dt, t] so they do not collapse to one x.
+    """
     if not state.config.spike_output.enabled:
         return
     if not dpg.does_item_exist("series_rgc_raster"):
         return
     n = int(state.config.retina.grid_resolution)
-    arr0 = getattr(state, _RASTER_SPIKE_ATTRS[0], None)
-    if arr0 is None or arr0.shape[0] != n or arr0.shape[1] != n:
+    attr = _raster_spike_attr_for_heatmap()
+    arr = getattr(state, attr, None)
+    if arr is None or arr.shape != (n, n):
         return
-    stride = max(4, n // 16)
-    sub0 = np.asarray(arr0[::stride, ::stride], dtype=np.float32)
-    k_per_map = int(sub0.size)
+    stride, sub_h, sub_w = _raster_subsample_stride(n)
+    k = sub_h * sub_w
+    sub = np.asarray(arr[::stride, ::stride], dtype=np.float32).ravel()
+    idx = np.flatnonzero(sub > 0.5)
     t = float(state.time)
     t_min = t - RASTER_TIME_WINDOW_S
     dq = _shared.get("raster_events")
@@ -314,43 +604,48 @@ def _update_spike_raster_series(state: SimState) -> None:
         dq = deque()
         _shared["raster_events"] = dq
 
-    new_t: List[float] = []
-    new_y: List[float] = []
-    for ti, name in enumerate(_RASTER_SPIKE_ATTRS):
-        arr = getattr(state, name, None)
-        if arr is None or arr.shape != (n, n):
-            continue
-        sub = np.asarray(arr[::stride, ::stride], dtype=np.float32).ravel()
-        idx = np.flatnonzero(sub > 0.5)
-        if idx.size == 0:
-            continue
-        y_off = float(ti * k_per_map)
-        new_y.extend((idx.astype(np.float64) + y_off).tolist())
-        new_t.extend([t] * int(idx.size))
-    if new_t:
-        dq.extend(zip(new_t, new_y))
+    if idx.size > 0:
+        idx.sort()
+        sim_dt = float(_shared.get("last_sim_dt", 1.0 / 60.0))
+        t0 = t - sim_dt
+        n_sp = int(idx.size)
+        for j, lin in enumerate(idx):
+            t_evt = t0 + (float(j) + 0.5) / float(max(n_sp, 1)) * sim_dt
+            y_row = float((k - 1) - int(lin))
+            dq.append((t_evt, y_row))
     while dq and cast(Tuple[float, float], dq[0])[0] < t_min:
         dq.popleft()
-    while len(dq) > RASTER_MAX_POINTS:
+    while len(dq) > RASTER_MAX_EVENTS:
         dq.popleft()
 
-    n_y = len(_RASTER_SPIKE_ATTRS) * k_per_map
     if dpg.does_item_exist("plot_raster_ax"):
         dpg.set_axis_limits("plot_raster_ax", max(0.0, t - RASTER_TIME_WINDOW_S), max(RASTER_TIME_WINDOW_S, t))
     if dpg.does_item_exist("plot_raster_ay"):
-        dpg.set_axis_limits("plot_raster_ay", -0.5, max(0.5, float(n_y) - 0.5))
+        dpg.set_axis_limits("plot_raster_ay", -0.5, max(0.5, float(k) - 0.5))
 
     if not dq:
         dpg.set_value("series_rgc_raster", [[], []])
         return
-    xs: List[float] = [cast(Tuple[float, float], p)[0] for p in dq]
-    ys: List[float] = [cast(Tuple[float, float], p)[1] for p in dq]
-    dpg.set_value("series_rgc_raster", [xs, ys])
+    nan = float("nan")
+    h = float(RASTER_TICK_HALF_HEIGHT)
+    xs_list: List[float] = []
+    ys_list: List[float] = []
+    for t_evt, y_row in dq:
+        xs_list.extend([t_evt, t_evt, nan])
+        ys_list.extend([y_row - h, y_row + h, nan])
+    dpg.set_value("series_rgc_raster", [xs_list, ys_list])
 
 
 def _render_stimulus_rgba(state: SimState) -> np.ndarray:
-    """Return Stimulus layer as (H, W, 4) float32 RGBA in 0–1."""
+    """Return Stimulus layer as (H, W, 4) float32 RGBA in 0–1.
+
+    Always derives the pattern from ``stimulus_params`` (via ``build_stimulus_spectrum``)
+    so the viewport matches the UI even when ``tick`` is skipped (e.g. ``SIM_TICK_EVERY_N`` > 1).
+    ``state.stimulus_spectrum`` can lag one or more frames behind user edits.
+    """
     stim_type = state.stimulus_params.get("type", "spot")
+    h, w = state.grid_shape()
+    wl = state.config.spectral.wavelengths
     # For image stimuli, show the loaded RGB image directly so the
     # user sees the true pixel colors rather than the spectral
     # centroid approximation used internally for cones.
@@ -358,7 +653,6 @@ def _render_stimulus_rgba(state: SimState) -> np.ndarray:
         from skimage.transform import resize as sk_resize
 
         img = np.asarray(state.stimulus_params["image_mask"], dtype=np.float32)
-        h, w = state.grid_shape()
         if img.ndim == 2:
             img = np.stack([img, img, img], axis=-1)
         if img.shape[0] != h or img.shape[1] != w:
@@ -374,18 +668,21 @@ def _render_stimulus_rgba(state: SimState) -> np.ndarray:
         if vmax > 1.0:
             img = img / 255.0
         img = np.clip(img, 0.0, 1.0)
-        # Apply global intensity as a simple gain for display.
         gain = float(state.stimulus_params.get("intensity", 1.0))
         rgb = np.clip(img * gain, 0.0, 1.0)
         rgba = np.zeros((h, w, 4), dtype=np.float32)
         rgba[..., :3] = rgb
         rgba[..., 3] = 1.0
         return rgba
-    if state.stimulus_spectrum is not None:
-        wl = state.config.spectral.wavelengths
-        return spectrum_to_stimulus_rgba(state.stimulus_spectrum, wl)
-    h, w = state.grid_shape()
-    return np.zeros((h, w, 4), dtype=np.float32)
+
+    spec = build_stimulus_spectrum(
+        state.stimulus_params,
+        state.config.spectral,
+        (h, w),
+        time_s=float(state.time),
+        retina=state.config.retina,
+    )
+    return spectrum_to_stimulus_rgba(spec, wl)
 
 
 def _get_heatmap_colormap() -> str:
@@ -455,7 +752,7 @@ def _resize_rgba_to_hw(rgba: np.ndarray, h: int, w: int) -> np.ndarray:
         return rgba
     rgba_clipped = np.clip(rgba, 0.0, 1.0)
     img_pil = Image.fromarray((rgba_clipped * 255.0).astype(np.uint8), mode="RGBA")
-    img_pil = img_pil.resize((w, h), Image.BILINEAR)
+    img_pil = img_pil.resize((w, h), _pil_resample(rgba.shape[0], rgba.shape[1], h, w))
     out = np.asarray(img_pil, dtype=np.uint8).astype(np.float32) / 255.0
     return out.astype(np.float32)
 
@@ -483,7 +780,8 @@ def _draw_strip_abbrev(canvas: np.ndarray, abbrev: str, x0: int, y0: int, w: int
     sw, sh = x1c - x0c, y1c - y0c
     if sw <= 0 or sh <= 0:
         return
-    strip = tuple(int(c * 255) for c in ALL_LAYERS_STRIP_RGBA[:3]) + (255,)
+    ui = _ui_letterbox_rgba()
+    strip = tuple(int(ui[i] * 255.0) for i in range(3)) + (255,)
     layer = Image.new("RGBA", (sw, sh), strip)
     draw = ImageDraw.Draw(layer)
     font = _get_tile_abbrev_font()
@@ -507,12 +805,9 @@ def _render_all_layers_composite(state: SimState) -> np.ndarray:
     H/Bip/Am are one column each. Strips above heatmaps hold 3-letter codes (white text).
     """
     grid_h, grid_w = state.grid_shape()
-    label_strip_h = max(12, min(18, int(grid_h * 0.055)))
-    row_gap = 2
-    comp_w = 3 * grid_w
-    comp_h = 4 * grid_h + 4 * label_strip_h + 3 * row_gap
+    comp_h, comp_w, label_strip_h, row_gap = _composite_layout_dims(grid_h, grid_w)
 
-    bg = np.asarray(ALL_LAYERS_BG_RGBA, dtype=np.float32)
+    bg = np.asarray(_ui_letterbox_rgba(), dtype=np.float32)
     canvas = _shared.get("all_layers_rgba")
     if not isinstance(canvas, np.ndarray) or canvas.shape[:2] != (comp_h, comp_w):
         canvas = np.empty((comp_h, comp_w, 4), dtype=np.float32)
@@ -595,7 +890,10 @@ def _resize_rgba_to_display(
         target_w = max(1, int(w * scale))
         target_h = max(1, int(h * scale))
         img_pil = Image.fromarray((rgba_clipped * 255.0).astype(np.uint8), mode="RGBA")
-        img_pil = img_pil.resize((target_w, target_h), Image.BILINEAR)
+        img_pil = img_pil.resize(
+            (target_w, target_h),
+            _pil_resample(h, w, target_h, target_w),
+        )
         small = np.asarray(img_pil, dtype=np.uint8).astype(np.float32) / 255.0
         if small.shape[2] == 3:
             alpha = np.ones((target_h, target_w, 1), dtype=np.float32)
@@ -744,6 +1042,28 @@ def _update_stimulus_visibility(stim_type: str, state: SimState | None = None) -
         show(tag)
 
 
+def sync_stimulus_type_in_params(state: SimState, new_type: str) -> None:
+    """Set ``stimulus_params['type']`` and remove ``image_mask`` when leaving image mode."""
+    t = str(new_type)
+    state.stimulus_params["type"] = t
+    if t != "image":
+        state.stimulus_params.pop("image_mask", None)
+
+
+def apply_stimulus_type_change(state: SimState, new_type: str) -> None:
+    """Apply a stimulus type from the UI: params + visibility (Dear PyGui)."""
+    sync_stimulus_type_in_params(state, new_type)
+    _update_stimulus_visibility(str(new_type), state)
+
+
+def apply_stimulus_type_change_from_ui(new_type: str) -> None:
+    """Combo callback: always mutate ``state_front`` so worker/front-buffer stays in sync."""
+    st = _shared.get("state_front") or _shared.get("state")
+    if st is None:
+        return
+    apply_stimulus_type_change(st, new_type)
+
+
 def _update_view_mode_ui(mode: str) -> None:
     """Show/hide controls depending on active 2D mode."""
     # Layer combo is only meaningful in single-layer 2D heatmap mode.
@@ -754,213 +1074,88 @@ def _update_view_mode_ui(mode: str) -> None:
             dpg.hide_item("layer_combo")
 
 
+def _apply_layout_preset(name: str) -> None:
+    comp = _shared.get("layout_composer")
+    if comp is None:
+        return
+    try:
+        data = gui_layout.load_preset_dict(gui_layout.preset_path(name))
+    except Exception as exc:
+        print(f"Layout preset load failed ({name}): {exc}")
+        return
+    comp.apply_preset(data)
+    _shared["active_preset"] = str(name)
+    try:
+        dpg.configure_viewport(0, min_width=comp.min_viewport_client_width())
+    except Exception:
+        pass
+
+
+def _bind_global_ui_theme(theme_id: str) -> None:
+    path = gui_themes.theme_json_path(theme_id)
+    if not path.is_file():
+        path = gui_themes.theme_json_path("dark_plus")
+    tokens = gui_themes.load_theme(path)
+    _shared["active_theme_id"] = path.stem
+    new_tid = gui_themes.build_dpg_theme(tokens)
+    dpg.bind_theme(new_tid)
+    old = _shared.pop("global_ui_theme_tag", None)
+    if old is not None and str(old) != str(new_tid) and dpg.does_item_exist(old):
+        try:
+            dpg.delete_item(old)
+        except Exception:
+            pass
+    _shared["global_ui_theme_tag"] = new_tid
+    _shared["ui_child_bg_rgba"] = tuple(
+        float(tokens.child_bg[i]) / 255.0 for i in range(4)
+    )
+    _refresh_viewport_chrome_theme_from_tokens(tokens)
+
+
+def _apply_ui_theme_from_menu(theme_id: str) -> None:
+    if not gui_themes.theme_json_path(theme_id).is_file():
+        print(f"Unknown theme: {theme_id}")
+        return
+    _bind_global_ui_theme(theme_id)
+    _shared["active_theme_id"] = theme_id
+
+
 def _build_menu_bar() -> None:
     with dpg.menu_bar():
         with dpg.menu(label="File"):
             dpg.add_menu_item(label="Quit", callback=lambda: dpg.stop_dearpygui())
         with dpg.menu(label="Simulation"):
             dpg.add_menu_item(label="Pause / Resume")  # placeholder
+        with dpg.menu(label="Settings"):
+            dpg.add_combo(
+                label="Layout preset",
+                items=["default", "wide_viewport", "plots_bottom"],
+                default_value="default",
+                tag="layout_preset_combo",
+                width=220,
+                callback=lambda s, a: _apply_layout_preset(str(a)),
+            )
+            dpg.add_combo(
+                label="Color theme",
+                items=["dark_plus", "light", "high_contrast", "paper"],
+                default_value="dark_plus",
+                tag="color_theme_combo",
+                width=220,
+                callback=lambda s, a: _apply_ui_theme_from_menu(str(a)),
+            )
         with dpg.menu(label="Help"):
+            dpg.add_menu_item(
+                label="Reset main viewer zoom & pan",
+                callback=_reset_main_viewer_view,
+            )
             dpg.add_menu_item(label="About", callback=lambda: dpg.show_item("about_window"))
-
-
-def _build_left_panel(state: SimState) -> None:
-    with dpg.child_window(
-        tag="left_panel_root",
-        width=LEFT_PANEL_WIDTH,
-        height=-1,
-        border=True,
-        autosize_x=False,
-    ):
-        dpg.add_text("View")
-        dpg.add_combo(
-            label="Mode",
-            items=["2D Heatmap", "2D All Layers"],
-            default_value="2D Heatmap",
-            tag="view_mode_combo",
-            width=SIDE_COMBO_WIDTH,
-            callback=lambda s, a: _update_view_mode_ui(a),
-        )
-        dpg.add_combo(
-            label="Layer",
-            items=[label for _k, label in LAYER_ITEMS_2D],
-            default_value=LAYER_KEY_TO_DISPLAY.get("RGC Firing (L)", "RGC Firing (L)"),
-            tag="layer_combo",
-            width=SIDE_COMBO_WIDTH,
-        )
-        # Scale bar length is in microns (um). Keep ASCII "um" to avoid font glyph issues.
-        try:
-            scale_um = float(state.config.viewer_3d.scale_bar_um)
-        except Exception:
-            scale_um = 100.0
-        dpg.add_text(f"Scale bar: {scale_um:.0f} um", tag="scale_bar_text")
-        dpg.add_checkbox(
-            label="Biological scale (weight by convergence)",
-            default_value=False,
-            tag="biological_scale_2d",
-        )
-        dpg.add_combo(
-            label="Heatmap colormap",
-            items=["Firing (amber)", "Biphasic", "Spectral", "Diverging"],
-            default_value="Firing (amber)",
-            tag="heatmap_colormap_combo",
-            width=SIDE_COMBO_WIDTH,
-        )
-        _panel_section_gap()
-        dpg.add_text("Stimulus")
-        dpg.add_combo(
-            label="Stimulus type",
-            items=[
-                "spot",
-                "full_field",
-                "annulus",
-                "bar",
-                "grating",
-                "checkerboard",
-                "moving_spot",
-                "moving_bar",
-                "moving_grating",
-                "expanding_ring",
-                "drifting_grating_full",
-                "dual_spot",
-                "image",
-            ],
-            default_value="spot",
-            tag="stimulus_type_combo",
-            width=STIM_COMBO_WIDTH,
-            callback=lambda s, a: (_update_stimulus_visibility(a, state), state.stimulus_params.update({"type": a})),
-        )
-        dpg.add_slider_float(
-            label="Wavelength (nm)",
-            min_value=380,
-            max_value=700,
-            default_value=550,
-            width=STIM_SLIDER_WIDTH,
-            callback=lambda s, a: state.stimulus_params.update({"wavelength_nm": a}),
-        )
-        dpg.add_slider_float(
-            label="Intensity",
-            min_value=0.0,
-            max_value=1.0,
-            default_value=1.0,
-            width=STIM_SLIDER_WIDTH,
-            callback=lambda s, a: state.stimulus_params.update({"intensity": a}),
-        )
-        dpg.add_slider_float(
-            label="Radius (deg)",
-            min_value=0.02,
-            max_value=0.5,
-            default_value=0.15,
-            width=STIM_SLIDER_WIDTH,
-            tag="stim_radius",
-            callback=lambda s, a: state.stimulus_params.update({"radius_deg": a}),
-        )
-        dpg.add_button(
-            label="Load image stimulus...",
-            width=-1,
-            tag="stim_load_image_btn",
-            callback=lambda: dpg.show_item("stim_image_dialog"),
-        )
-        with dpg.tree_node(label="Advanced", default_open=False, tag="stim_advanced_node"):
-                dpg.add_slider_float(label="X center (deg)", min_value=-0.5, max_value=0.5, default_value=0.0,
-                    width=STIM_SLIDER_WIDTH, tag="stim_x_deg", callback=lambda s, a: state.stimulus_params.update({"x_deg": a}))
-                dpg.add_slider_float(label="Y center (deg)", min_value=-0.5, max_value=0.5, default_value=0.0,
-                    width=STIM_SLIDER_WIDTH, tag="stim_y_deg", callback=lambda s, a: state.stimulus_params.update({"y_deg": a}))
-                dpg.add_slider_float(label="Orientation (deg)", min_value=0.0, max_value=180.0, default_value=0.0,
-                    width=STIM_SLIDER_WIDTH, tag="stim_orientation", callback=lambda s, a: state.stimulus_params.update({"orientation_deg": a}))
-                dpg.add_slider_float(label="Width (deg)", min_value=0.02, max_value=0.4, default_value=0.1,
-                    width=STIM_SLIDER_WIDTH, tag="stim_width", callback=lambda s, a: state.stimulus_params.update({"width_deg": a}))
-                dpg.add_slider_float(label="Spatial freq (cpd)", min_value=0.5, max_value=8.0, default_value=2.0,
-                    width=STIM_SLIDER_WIDTH, tag="stim_spatial_freq", callback=lambda s, a: state.stimulus_params.update({"spatial_freq_cpd": a}))
-                dpg.add_slider_float(label="Phase (deg)", min_value=0.0, max_value=360.0, default_value=0.0,
-                    width=STIM_SLIDER_WIDTH, tag="stim_phase", callback=lambda s, a: state.stimulus_params.update({"phase_deg": a}))
-                dpg.add_slider_float(label="Inner radius (deg)", min_value=0.01, max_value=0.3, default_value=0.05,
-                    width=STIM_SLIDER_WIDTH, tag="stim_inner_radius", callback=lambda s, a: state.stimulus_params.update({"inner_radius_deg": a}))
-                dpg.add_slider_float(label="Velocity X (deg/s)", min_value=-2.0, max_value=2.0, default_value=0.0,
-                    width=STIM_SLIDER_WIDTH, tag="stim_vx", callback=lambda s, a: state.stimulus_params.update({"vx_deg_s": a}))
-                dpg.add_slider_float(label="Velocity Y (deg/s)", min_value=-2.0, max_value=2.0, default_value=0.0,
-                    width=STIM_SLIDER_WIDTH, tag="stim_vy", callback=lambda s, a: state.stimulus_params.update({"vy_deg_s": a}))
-                dpg.add_combo(
-                    label="Motion mode",
-                    items=["linear", "loop", "oscillate"],
-                    default_value="linear",
-                    tag="stim_motion_mode",
-                    width=STIM_COMBO_WIDTH,
-                    callback=lambda s, a: state.stimulus_params.update({"motion_mode": a}),
-                )
-                dpg.add_slider_float(
-                    label="Loop period (s)",
-                    min_value=0.2,
-                    max_value=20.0,
-                    default_value=2.0,
-                    width=STIM_SLIDER_WIDTH,
-                    tag="stim_motion_period",
-                    callback=lambda s, a: state.stimulus_params.update({"motion_period_s": a}),
-                )
-                dpg.add_slider_float(
-                    label="Oscillate amplitude (deg)",
-                    min_value=0.02,
-                    max_value=0.5,
-                    default_value=0.2,
-                    width=STIM_SLIDER_WIDTH,
-                    tag="stim_motion_amp",
-                    callback=lambda s, a: state.stimulus_params.update({"motion_osc_amp_deg": a}),
-                )
-                dpg.add_slider_float(
-                    label="Oscillate frequency (Hz)",
-                    min_value=0.05,
-                    max_value=5.0,
-                    default_value=1.0,
-                    width=STIM_SLIDER_WIDTH,
-                    tag="stim_motion_hz",
-                    callback=lambda s, a: state.stimulus_params.update({"motion_osc_hz": a}),
-                )
-                dpg.add_slider_float(label="Secondary radius (deg)", min_value=0.02, max_value=0.5, default_value=0.15,
-                    width=STIM_SLIDER_WIDTH, tag="stim_radius2", callback=lambda s, a: state.stimulus_params.update({"radius2_deg": a}))
-                dpg.add_slider_float(label="Secondary X (deg)", min_value=-0.5, max_value=0.5, default_value=0.25,
-                    width=STIM_SLIDER_WIDTH, tag="stim_x2_deg", callback=lambda s, a: state.stimulus_params.update({"x2_deg": a}))
-                dpg.add_slider_float(label="Secondary Y (deg)", min_value=-0.5, max_value=0.5, default_value=0.0,
-                    width=STIM_SLIDER_WIDTH, tag="stim_y2_deg", callback=lambda s, a: state.stimulus_params.update({"y2_deg": a}))
-                dpg.add_slider_float(label="Secondary wavelength (nm)", min_value=380, max_value=700, default_value=450,
-                    width=STIM_SLIDER_WIDTH, tag="stim_wavelength2", callback=lambda s, a: state.stimulus_params.update({"wavelength2_nm": a}))
-                dpg.add_slider_float(label="Secondary intensity", min_value=0.0, max_value=1.0, default_value=1.0,
-                    width=STIM_SLIDER_WIDTH, tag="stim_intensity2", callback=lambda s, a: state.stimulus_params.update({"intensity2": a}))
-        _panel_section_gap()
-        dpg.add_text("Circuit tuning")
-        _build_connectivity_weights_block(state)
-        _panel_section_gap()
-        _build_spatial_heterogeneity_block(state)
-        _panel_section_gap()
-        dpg.add_text("Spike output")
-        dpg.add_checkbox(
-            label="Generate spikes from RGC rates (Poisson)",
-            default_value=state.config.spike_output.enabled,
-            tag="spike_output_enabled",
-            callback=lambda s, a: (
-                setattr(state.config.spike_output, "enabled", bool(a)),
-                _toggle_spike_raster_ui(bool(a)),
-            ),
-        )
-        dpg.add_checkbox(
-            label="Spikes from smoothed rates (else LN instant)",
-            default_value=state.config.spike_output.use_smoothed_rates,
-            tag="spike_use_smoothed",
-            callback=lambda s, a: setattr(state.config.spike_output, "use_smoothed_rates", bool(a)),
-        )
-        _panel_section_gap()
-        dpg.add_text("Cell parameters")
-        _build_cell_params_block(state)
-
-
-_CONN_WEIGHT_MIN = -3.0
-_CONN_WEIGHT_MAX = 3.0
 
 
 def _set_conn_weight(state: SimState, key: str, value: float) -> None:
     if key is None or not isinstance(key, str):
         return
     if hasattr(state.config, "connectivity_weights"):
-        v = max(_CONN_WEIGHT_MIN, min(_CONN_WEIGHT_MAX, float(value)))
+        v = max(CONN_WEIGHT_MIN, min(CONN_WEIGHT_MAX, float(value)))
         setattr(state.config.connectivity_weights, key, v)
 
 
@@ -1046,373 +1241,6 @@ def _tm_set_gain(state: SimState, i: int, v: float) -> None:
         dpg.set_value(f"sh_tm_gn_{i}", t[i])
 
 
-def _build_spatial_heterogeneity_block(state: SimState) -> None:
-    cfg = state.config
-    sh = cfg.spatial_heterogeneity
-    desc_color = (160, 200, 220, 255)
-
-    def on_mode_change(s, app_data) -> None:
-        try:
-            idx = _SH_MODE_LABELS.index(str(app_data))
-        except ValueError:
-            return
-        modes = (
-            SpatialHeterogeneityMode.HOMOGENEOUS,
-            SpatialHeterogeneityMode.SCATTER,
-            SpatialHeterogeneityMode.TYPE_MAP,
-            SpatialHeterogeneityMode.ECCENTRICITY,
-            SpatialHeterogeneityMode.MOSAIC,
-        )
-        sh.mode = modes[idx]
-        _sh_sync_mode_group_visibility(idx)
-        _sh_mark_heterogeneity_dirty(state)
-
-    dpg.add_text("Spatial Heterogeneity")
-    dpg.add_radio_button(
-        items=list(_SH_MODE_LABELS),
-        default_value=_SH_MODE_LABELS[_sh_mode_index(sh.mode)],
-        horizontal=False,
-        tag="sh_mode_radio",
-        callback=on_mode_change,
-    )
-
-    # --- Mode 0 ---
-    with dpg.group(tag="sh_mode_group_0", show=sh.mode == SpatialHeterogeneityMode.HOMOGENEOUS):
-        dpg.add_spacer(height=4)
-        dpg.add_text(
-            "All cells share identical parameters - mean-field approximation.",
-            color=desc_color,
-            wrap=SIDE_PANEL_TEXT_WRAP,
-        )
-
-    # --- Mode 1 ---
-    sc = sh.scatter
-    with dpg.group(tag="sh_mode_group_1", show=sh.mode == SpatialHeterogeneityMode.SCATTER):
-        dpg.add_spacer(height=4)
-        dpg.add_text(
-            "Biological variability: each cell's weights are drawn from a distribution around the mean, mimicking cell-to-cell noise in real tissue.",
-            color=desc_color,
-            wrap=SIDE_PANEL_TEXT_WRAP,
-        )
-        dpg.add_slider_float(
-            label="Scatter sigma",
-            min_value=0.0,
-            max_value=1.0,
-            default_value=float(sc.sigma),
-            width=SIDE_SLIDER_WIDTH,
-            tag="sh_sc_sigma",
-            callback=lambda s, a: (
-                setattr(sc, "sigma", float(a)),
-                _sh_mark_heterogeneity_dirty(state),
-            ),
-        )
-        dpg.add_checkbox(
-            label="cone_to_bipolar",
-            default_value=sc.affect_cone_to_bipolar,
-            tag="sh_sc_cb",
-            callback=lambda s, a: (
-                setattr(sc, "affect_cone_to_bipolar", bool(a)),
-                _sh_mark_heterogeneity_dirty(state),
-            ),
-        )
-        dpg.add_checkbox(
-            label="bipolar_to_rgc",
-            default_value=sc.affect_bipolar_to_rgc,
-            tag="sh_sc_br",
-            callback=lambda s, a: (
-                setattr(sc, "affect_bipolar_to_rgc", bool(a)),
-                _sh_mark_heterogeneity_dirty(state),
-            ),
-        )
-        dpg.add_checkbox(
-            label="amacrine_to_bipolar",
-            default_value=sc.affect_amacrine_to_bipolar,
-            tag="sh_sc_ab",
-            callback=lambda s, a: (
-                setattr(sc, "affect_amacrine_to_bipolar", bool(a)),
-                _sh_mark_heterogeneity_dirty(state),
-            ),
-        )
-        dpg.add_button(
-            label="Resample noise map",
-            width=-1,
-            callback=lambda: (
-                setattr(sc, "resample_seed", int(sc.resample_seed) + 1),
-                _sh_mark_heterogeneity_dirty(state),
-            ),
-        )
-
-    # --- Mode 2 ---
-    tm = sh.type_map
-    with dpg.group(tag="sh_mode_group_2", show=sh.mode == SpatialHeterogeneityMode.TYPE_MAP):
-        dpg.add_spacer(height=4)
-        dpg.add_text(
-            "Each spatial location is assigned an RGC type identity drawn from population fractions. RF size, gain, and temporal tuning vary by type.",
-            color=desc_color,
-            wrap=SIDE_PANEL_TEXT_WRAP,
-        )
-        for i in range(6):
-            dpg.add_slider_float(
-                label=_SH_TYPE_BUCKET_LABELS[i],
-                min_value=0.0,
-                max_value=1.0,
-                default_value=float(tm.type_fractions[i]),
-                width=SIDE_SLIDER_WIDTH,
-                tag=f"sh_tm_frac_{i}",
-                callback=lambda s, a, ii=i: (
-                    _sh_normalize_tm_fractions(state),
-                    _sh_mark_heterogeneity_dirty(state),
-                ),
-            )
-        dpg.add_text("Type fractions (%)", tag="sh_tm_frac_readout")
-        dpg.add_separator()
-        dpg.add_text("RF size multiplier")
-        for i in range(6):
-            dpg.add_input_float(
-                label=_SH_TYPE_BUCKET_LABELS[i],
-                default_value=float(tm.rf_multiplier[i]),
-                min_value=0.1,
-                max_value=4.0,
-                min_clamped=True,
-                max_clamped=True,
-                width=SIDE_SPIN_WIDTH,
-                tag=f"sh_tm_rf_{i}",
-                **_CONN_F,
-                callback=lambda s, a, ii=i: (
-                    _tm_set_rf(state, ii, float(a)),
-                    _sh_mark_heterogeneity_dirty(state),
-                ),
-            )
-        dpg.add_text("Gain multiplier")
-        for i in range(6):
-            dpg.add_input_float(
-                label=_SH_TYPE_BUCKET_LABELS[i],
-                default_value=float(tm.gain_multiplier[i]),
-                min_value=0.1,
-                max_value=4.0,
-                min_clamped=True,
-                max_clamped=True,
-                width=SIDE_SPIN_WIDTH,
-                tag=f"sh_tm_gn_{i}",
-                **_CONN_F,
-                callback=lambda s, a, ii=i: (
-                    _tm_set_gain(state, ii, float(a)),
-                    _sh_mark_heterogeneity_dirty(state),
-                ),
-            )
-        dpg.add_button(
-            label="Regenerate type map",
-            width=-1,
-            callback=lambda: (
-                setattr(tm, "map_seed", int(tm.map_seed) + 1),
-                _sh_mark_heterogeneity_dirty(state),
-            ),
-        )
-
-    # --- Mode 3 ---
-    ec = sh.eccentricity
-    ecc_items = ["Linear", "Square root"]
-    if EMPIRICAL_ECCENTRICITY_AVAILABLE:
-        ecc_items.append("Empirical (Curcio and Allen)")
-    with dpg.group(tag="sh_mode_group_3", show=sh.mode == SpatialHeterogeneityMode.ECCENTRICITY):
-        dpg.add_spacer(height=4)
-        dpg.add_text(
-            "RF size grows and cell density decreases with distance from the foveal center, matching known human retinal topography.",
-            color=desc_color,
-            wrap=SIDE_PANEL_TEXT_WRAP,
-        )
-        dpg.add_slider_float(
-            label="Fovea X (px)",
-            min_value=0.0,
-            max_value=float(cfg.retina.grid_resolution - 1),
-            default_value=float(ec.fovea_px_x),
-            width=SIDE_SLIDER_WIDTH,
-            tag="sh_ec_fx",
-            callback=lambda s, a: (
-                setattr(ec, "fovea_px_x", float(a)),
-                _sh_mark_heterogeneity_dirty(state),
-            ),
-        )
-        dpg.add_slider_float(
-            label="Fovea Y (px)",
-            min_value=0.0,
-            max_value=float(cfg.retina.grid_resolution - 1),
-            default_value=float(ec.fovea_px_y),
-            width=SIDE_SLIDER_WIDTH,
-            tag="sh_ec_fy",
-            callback=lambda s, a: (
-                setattr(ec, "fovea_px_y", float(a)),
-                _sh_mark_heterogeneity_dirty(state),
-            ),
-        )
-        dpg.add_input_float(
-            label="Eccentricity scale (deg/px)",
-            default_value=float(ec.eccentricity_scale_deg_per_px),
-            min_value=0.001,
-            max_value=0.5,
-            min_clamped=True,
-            max_clamped=True,
-            width=SIDE_SPIN_WIDE,
-            tag="sh_ec_scale",
-            **_CONN_F,
-            callback=lambda s, a: (
-                setattr(ec, "eccentricity_scale_deg_per_px", float(a)),
-                _sh_mark_heterogeneity_dirty(state),
-            ),
-        )
-        dpg.add_input_float(
-            label="RF growth strength",
-            default_value=float(ec.rf_growth_strength),
-            min_value=0.0,
-            max_value=3.0,
-            min_clamped=True,
-            max_clamped=True,
-            width=SIDE_SPIN_WIDE,
-            tag="sh_ec_strength",
-            **_CONN_F,
-            callback=lambda s, a: (
-                setattr(ec, "rf_growth_strength", float(a)),
-                _sh_mark_heterogeneity_dirty(state),
-            ),
-        )
-
-        def _ec_combo_to_enum(label: str) -> EccentricityGradientType:
-            if label.startswith("Linear"):
-                return EccentricityGradientType.LINEAR
-            if label.startswith("Square"):
-                return EccentricityGradientType.SQRT
-            return EccentricityGradientType.EMPIRICAL
-
-        def _ec_enum_to_combo(e: EccentricityGradientType) -> str:
-            if e == EccentricityGradientType.LINEAR:
-                return ecc_items[0]
-            if e == EccentricityGradientType.SQRT:
-                return ecc_items[1]
-            return ecc_items[-1] if len(ecc_items) > 2 else ecc_items[0]
-
-        dpg.add_combo(
-            label="Gradient function",
-            items=ecc_items,
-            default_value=_ec_enum_to_combo(ec.gradient),
-            width=SIDE_COMBO_WIDTH,
-            tag="sh_ec_grad",
-            callback=lambda s, a: (
-                setattr(ec, "gradient", _ec_combo_to_enum(str(a))),
-                _sh_mark_heterogeneity_dirty(state),
-            ),
-        )
-        dpg.add_checkbox(
-            label="Preview eccentricity isolines on 2D heatmap",
-            default_value=ec.preview_overlay,
-            tag="sh_ec_preview",
-            callback=lambda s, a: setattr(ec, "preview_overlay", bool(a)),
-        )
-
-    # --- Mode 4 ---
-    mo = sh.mosaic
-    mosaic_labels = ("Hexagonal regular", "Hexagonal + jitter", "Random Poisson")
-
-    def _mos_combo_to_enum(lab: str) -> MosaicLayoutType:
-        if "regular" in lab.lower():
-            return MosaicLayoutType.HEX_REGULAR
-        if "jitter" in lab.lower():
-            return MosaicLayoutType.HEX_JITTER
-        return MosaicLayoutType.POISSON
-
-    def _mos_enum_to_combo(m: MosaicLayoutType) -> str:
-        if m == MosaicLayoutType.HEX_REGULAR:
-            return mosaic_labels[0]
-        if m == MosaicLayoutType.HEX_JITTER:
-            return mosaic_labels[1]
-        return mosaic_labels[2]
-
-    def on_mosaic_type(s, app_data) -> None:
-        mo.mosaic_type = _mos_combo_to_enum(str(app_data))
-        show_j = mo.mosaic_type == MosaicLayoutType.HEX_JITTER
-        if dpg.does_item_exist("sh_mosaic_jitter_group"):
-            dpg.configure_item("sh_mosaic_jitter_group", show=show_j)
-        _sh_mark_heterogeneity_dirty(state)
-
-    with dpg.group(tag="sh_mode_group_4", show=sh.mode == SpatialHeterogeneityMode.MOSAIC):
-        dpg.add_spacer(height=4)
-        dpg.add_text(
-            "A discrete set of RGC units tile the retina; each unit integrates inputs from its Voronoi territory.",
-            color=desc_color,
-            wrap=SIDE_PANEL_TEXT_WRAP,
-        )
-        def on_mo_n_cells(s, app_data) -> None:
-            v = int(app_data)
-            mo.n_cells = v
-            if dpg.does_item_exist("sh_mo_warn_group"):
-                dpg.configure_item("sh_mo_warn_group", show=v > 500)
-            _sh_mark_heterogeneity_dirty(state)
-
-        dpg.add_slider_int(
-            label="N cells",
-            min_value=100,
-            max_value=2000,
-            default_value=int(mo.n_cells),
-            width=SIDE_SLIDER_WIDTH,
-            tag="sh_mo_n",
-            callback=on_mo_n_cells,
-        )
-        with dpg.group(tag="sh_mo_warn_group", show=int(mo.n_cells) > 500):
-            dpg.add_text(
-                "Large N can slow the simulation. Consider N <= 500 for interactive use.",
-                color=(220, 180, 120, 255),
-            )
-        dpg.add_combo(
-            label="Mosaic type",
-            items=list(mosaic_labels),
-            default_value=_mos_enum_to_combo(mo.mosaic_type),
-            width=SIDE_COMBO_WIDTH,
-            tag="sh_mo_type",
-            callback=on_mosaic_type,
-        )
-        with dpg.group(
-            tag="sh_mosaic_jitter_group",
-            show=mo.mosaic_type == MosaicLayoutType.HEX_JITTER,
-        ):
-            dpg.add_slider_float(
-                label="Jitter sigma",
-                min_value=0.0,
-                max_value=1.0,
-                default_value=float(mo.jitter_sigma),
-                width=SIDE_SLIDER_WIDTH,
-                tag="sh_mo_jitter",
-                callback=lambda s, a: (
-                    setattr(mo, "jitter_sigma", float(a)),
-                    _sh_mark_heterogeneity_dirty(state),
-                ),
-            )
-        dpg.add_checkbox(
-            label="Show mosaic overlay (Voronoi boundaries + centers)",
-            default_value=mo.show_overlay,
-            tag="sh_mo_overlay",
-            callback=lambda s, a: setattr(mo, "show_overlay", bool(a)),
-        )
-        dpg.add_checkbox(
-            label="Static snapshot while rebuilding mosaic (pauses sim one frame)",
-            default_value=mo.static_snapshot_while_building,
-            tag="sh_mo_static",
-            callback=lambda s, a: setattr(
-                mo, "static_snapshot_while_building", bool(a)
-            ),
-        )
-        dpg.add_button(
-            label="Regenerate mosaic",
-            width=-1,
-            callback=lambda: (
-                setattr(mo, "mosaic_seed", int(mo.mosaic_seed) + 1),
-                _sh_mark_heterogeneity_dirty(state),
-            ),
-        )
-
-    _sh_sync_mode_group_visibility(_sh_mode_index(sh.mode))
-    if dpg.does_item_exist("sh_tm_frac_0"):
-        _sh_normalize_tm_fractions(state)
-
-
 def _reset_connectivity_weights(state: SimState) -> None:
     cw = state.config.connectivity_weights
     for key in ("cone_to_horizontal", "cone_to_bipolar", "horizontal_to_cone",
@@ -1431,209 +1259,6 @@ def _reset_connectivity_weights(state: SimState) -> None:
     _shared["connectivity_dirty"] = True
 
 
-# Dear PyGui input_float: show 3 decimals; avoid "->" in labels (font may render as "?")
-_CONN_F = {"step": 0.001, "format": "%.3f"}
-# Format only — use with per-widget step=... (do not merge _CONN_F or step is duplicated)
-_INPUT_FLOAT_FMT = {"format": "%.3f"}
-
-
-def _build_connectivity_weights_block(state: SimState) -> None:
-    """Synaptic weight editors (also used in left panel)."""
-    dpg.add_text("Pathway weights (-3 to 3). Negative inverts/scales inhibitory paths; see pipeline.")
-    cw = state.config.connectivity_weights
-    rows = [
-        ("conn_cone_to_horizontal", "Cone to Horizontal", "cone_to_horizontal"),
-        ("conn_cone_to_bipolar", "Cone to Bipolar", "cone_to_bipolar"),
-        ("conn_horizontal_to_cone", "Horizontal to Cone", "horizontal_to_cone"),
-        ("conn_bipolar_to_amacrine", "Bipolar to Amacrine", "bipolar_to_amacrine"),
-        ("conn_amacrine_to_bipolar", "Amacrine to Bipolar", "amacrine_to_bipolar"),
-        ("conn_bipolar_to_rgc", "Bipolar to RGC", "bipolar_to_rgc"),
-    ]
-    for tag, label, key in rows:
-        dpg.add_input_float(
-            label=label,
-            default_value=getattr(cw, key),
-            min_value=_CONN_WEIGHT_MIN,
-            max_value=_CONN_WEIGHT_MAX,
-            min_clamped=True,
-            max_clamped=True,
-            width=SIDE_SPIN_WIDTH,
-            tag=tag,
-            **_CONN_F,
-            callback=lambda s, a, *_a, k=key: (_set_conn_weight(state, k, a), _set_connectivity_dirty()),
-        )
-    dpg.add_button(
-        label="Reset weights to 1.0",
-        tag="conn_reset",
-        width=-1,
-        callback=lambda: _reset_connectivity_weights(state),
-    )
-    dpg.add_button(
-        label="Randomize weights",
-        tag="conn_randomize",
-        width=-1,
-        callback=lambda: _randomize_connectivity_weights(state),
-    )
-
-
-def _build_cell_params_block(state: SimState) -> None:
-    """Detailed cell parameters (pathway knobs; not tied to named histological types)."""
-    cfg = state.config
-    with dpg.tree_node(label="RGC pathway (narrow field)", default_open=True):
-        dpg.add_input_float(
-            label="Dendritic sigma (deg)",
-            default_value=cfg.dendritic.sigma_midget_deg,
-            step=0.001,
-            **_INPUT_FLOAT_FMT,
-            width=SIDE_SPIN_WIDTH,
-            callback=lambda s, a: setattr(cfg.dendritic, "sigma_midget_deg", a),
-        )
-        dpg.add_input_float(
-            label="Max firing (sp/s)",
-            default_value=cfg.rgc_nl.r_max,
-            step=1.0,
-            **_INPUT_FLOAT_FMT,
-            width=SIDE_SPIN_WIDTH,
-            callback=lambda s, a: setattr(cfg.rgc_nl, "r_max", a),
-        )
-        dpg.add_input_float(
-            label="LN slope",
-            default_value=cfg.rgc_nl.slope,
-            step=0.1,
-            **_INPUT_FLOAT_FMT,
-            width=SIDE_SPIN_WIDTH,
-            callback=lambda s, a: setattr(cfg.rgc_nl, "slope", a),
-        )
-        dpg.add_input_float(
-            label="LN half-point",
-            default_value=cfg.rgc_nl.x_half,
-            step=0.01,
-            **_INPUT_FLOAT_FMT,
-            width=SIDE_SPIN_WIDTH,
-            callback=lambda s, a: setattr(cfg.rgc_nl, "x_half", a),
-        )
-        dpg.add_input_float(
-            label="Tau (s)",
-            default_value=cfg.temporal.rgc_tau,
-            step=0.01,
-            **_INPUT_FLOAT_FMT,
-            width=SIDE_SPIN_WIDTH,
-            callback=lambda s, a: setattr(cfg.temporal, "rgc_tau", a),
-        )
-    with dpg.tree_node(label="RGC pathway (wide field)", default_open=False):
-        dpg.add_input_float(
-            label="Dendritic sigma (deg)",
-            default_value=cfg.dendritic.sigma_parasol_deg,
-            step=0.001,
-            **_INPUT_FLOAT_FMT,
-            width=SIDE_SPIN_WIDTH,
-            callback=lambda s, a: setattr(cfg.dendritic, "sigma_parasol_deg", a),
-        )
-        dpg.add_text("(LN r_max / slope / half-point shared with narrow field above)")
-    with dpg.tree_node(label="Bipolar pooling", default_open=False):
-        dpg.add_input_float(
-            label="Sigma diffuse (deg)",
-            default_value=cfg.bipolar.sigma_diffuse_deg,
-            step=0.001,
-            **_INPUT_FLOAT_FMT,
-            width=SIDE_SPIN_WIDTH,
-            callback=lambda s, a: setattr(cfg.bipolar, "sigma_diffuse_deg", a),
-        )
-        dpg.add_input_float(
-            label="Tau (s)",
-            default_value=cfg.temporal.bipolar_tau,
-            step=0.01,
-            **_INPUT_FLOAT_FMT,
-            width=SIDE_SPIN_WIDTH,
-            callback=lambda s, a: setattr(cfg.temporal, "bipolar_tau", a),
-        )
-    with dpg.tree_node(label="Horizontal feedback", default_open=False):
-        dpg.add_input_float(
-            label="Sigma LM (deg)",
-            default_value=cfg.horizontal.sigma_lm_deg,
-            step=0.001,
-            **_INPUT_FLOAT_FMT,
-            width=SIDE_SPIN_WIDTH,
-            callback=lambda s, a: setattr(cfg.horizontal, "sigma_lm_deg", a),
-        )
-        dpg.add_input_float(
-            label="Sigma S (deg)",
-            default_value=cfg.horizontal.sigma_s_deg,
-            step=0.001,
-            **_INPUT_FLOAT_FMT,
-            width=SIDE_SPIN_WIDTH,
-            callback=lambda s, a: setattr(cfg.horizontal, "sigma_s_deg", a),
-        )
-        dpg.add_input_float(
-            label="Alpha LM",
-            default_value=cfg.horizontal.alpha_lm,
-            step=0.01,
-            **_INPUT_FLOAT_FMT,
-            width=SIDE_SPIN_WIDTH,
-            callback=lambda s, a: setattr(cfg.horizontal, "alpha_lm", a),
-        )
-        dpg.add_input_float(
-            label="Alpha S",
-            default_value=cfg.horizontal.alpha_s,
-            step=0.01,
-            **_INPUT_FLOAT_FMT,
-            width=SIDE_SPIN_WIDTH,
-            callback=lambda s, a: setattr(cfg.horizontal, "alpha_s", a),
-        )
-        dpg.add_input_float(
-            label="Tau (s)",
-            default_value=cfg.temporal.horizontal_tau,
-            step=0.01,
-            **_INPUT_FLOAT_FMT,
-            width=SIDE_SPIN_WIDTH,
-            callback=lambda s, a: setattr(cfg.temporal, "horizontal_tau", a),
-        )
-    with dpg.tree_node(label="Lateral inhibition (narrow pool)", default_open=False):
-        dpg.add_input_float(
-            label="Sigma (deg)",
-            default_value=cfg.amacrine.sigma_aii_deg,
-            step=0.001,
-            **_INPUT_FLOAT_FMT,
-            width=SIDE_SPIN_WIDTH,
-            callback=lambda s, a: setattr(cfg.amacrine, "sigma_aii_deg", a),
-        )
-        dpg.add_input_float(
-            label="Gamma (weight)",
-            default_value=cfg.amacrine.gamma_aii,
-            step=0.01,
-            **_INPUT_FLOAT_FMT,
-            width=SIDE_SPIN_WIDTH,
-            callback=lambda s, a: setattr(cfg.amacrine, "gamma_aii", a),
-        )
-        dpg.add_input_float(
-            label="Tau (s)",
-            default_value=cfg.temporal.amacrine_tau,
-            step=0.01,
-            **_INPUT_FLOAT_FMT,
-            width=SIDE_SPIN_WIDTH,
-            callback=lambda s, a: setattr(cfg.temporal, "amacrine_tau", a),
-        )
-    with dpg.tree_node(label="Lateral inhibition (wide pool)", default_open=False):
-        dpg.add_input_float(
-            label="Sigma (deg)",
-            default_value=cfg.amacrine.sigma_wide_deg,
-            step=0.001,
-            **_INPUT_FLOAT_FMT,
-            width=SIDE_SPIN_WIDTH,
-            callback=lambda s, a: setattr(cfg.amacrine, "sigma_wide_deg", a),
-        )
-        dpg.add_input_float(
-            label="Gamma (weight)",
-            default_value=cfg.amacrine.gamma_wide,
-            step=0.01,
-            **_INPUT_FLOAT_FMT,
-            width=SIDE_SPIN_WIDTH,
-            callback=lambda s, a: setattr(cfg.amacrine, "gamma_wide", a),
-        )
-        dpg.add_text("(Tau shared with narrow pool above)")
-    dpg.add_spacer(height=8)
-
-
 def _randomize_connectivity_weights(state: SimState) -> None:
     cw = state.config.connectivity_weights
     for key in ("cone_to_horizontal", "cone_to_bipolar", "horizontal_to_cone",
@@ -1641,7 +1266,7 @@ def _randomize_connectivity_weights(state: SimState) -> None:
         setattr(
             cw,
             key,
-            random.uniform(_CONN_WEIGHT_MIN, _CONN_WEIGHT_MAX),
+            random.uniform(CONN_WEIGHT_MIN, CONN_WEIGHT_MAX),
         )
     for tag, key in [
         ("conn_cone_to_horizontal", "cone_to_horizontal"),
@@ -1656,144 +1281,98 @@ def _randomize_connectivity_weights(state: SimState) -> None:
     _shared["connectivity_dirty"] = True
 
 
-def _build_right_panel(state: SimState) -> None:
-    """Right panel: Stats, Plots, Export, Recording."""
-    with dpg.child_window(
-        tag="right_panel_root",
-        width=RIGHT_PANEL_WIDTH,
-        height=-1,
-        border=True,
-        autosize_x=False,
-    ):
-        with dpg.tab_bar(tag="right_panel_tabs"):
-            with dpg.tab(label="Stats"):
-                dpg.add_text("Mean FR per RGC type (sp/s)")
-                dpg.add_text("", tag="mean_fr_midget_on_L")
-                dpg.add_text("", tag="mean_fr_parasol_on")
-                dpg.add_spacer(height=4)
-                dpg.add_text("L-M and S - (L+M)")
-                dpg.add_text("", tag="lm_summary")
-                dpg.add_text("", tag="by_summary")
-                with dpg.tree_node(label="Per-layer", default_open=False):
-                    for name in ["Stimulus", "Cones L", "Cones M", "Horizontal", "Bipolar", "Amacrine", "RGC"]:
-                        dpg.add_text("", tag=f"stat_layer_{name}")
-                with dpg.tree_node(label="RGC dynamics", default_open=True):
-                    dpg.add_text("RGC mean FR (last 100 ticks)", tag="sparkline_label")
-                    with dpg.plot(tag="sparkline_plot", height=140, width=-1):
-                        dpg.add_plot_axis(dpg.mvXAxis, tag="spark_x")
-                        dpg.add_plot_axis(dpg.mvYAxis, tag="spark_y")
-                        dpg.add_line_series([], [], tag="sparkline_series", parent="spark_y")
-                    dpg.add_text("RGC FR histogram", tag="hist_label")
-                    with dpg.plot(tag="hist_plot", height=140, width=-1):
-                        dpg.add_plot_axis(dpg.mvXAxis, tag="hist_x")
-                        dpg.add_plot_axis(dpg.mvYAxis, tag="hist_y")
-                        dpg.add_bar_series([], [], tag="hist_series", parent="hist_y", weight=0.8)
-            with dpg.tab(label="Plots"):
-                dpg.add_text("Cone mean drive (L / M / S)")
-                with dpg.plot(height=170, width=-1, tag="plot_cone_act"):
-                    dpg.add_plot_legend()
-                    dpg.add_plot_axis(dpg.mvXAxis, label="", tag="plot_cone_ax")
-                    dpg.add_plot_axis(dpg.mvYAxis, label="mean", tag="plot_cone_ay")
-                    dpg.add_bar_series(
-                        [0, 1, 2],
-                        [0.0, 0.0, 0.0],
-                        weight=0.45,
-                        label="cones",
-                        parent="plot_cone_ay",
-                        tag="series_cone_bars",
-                    )
-                dpg.add_text("Opponent means over time (last 80 ticks)")
-                with dpg.plot(height=150, width=-1, tag="plot_oppo_ts"):
-                    dpg.add_plot_legend()
-                    dpg.add_plot_axis(dpg.mvXAxis, label="tick", tag="plot_oppo_ax")
-                    dpg.add_plot_axis(dpg.mvYAxis, label="signal", tag="plot_oppo_ay")
-                    dpg.add_line_series([], [], label="L-M", parent="plot_oppo_ay", tag="series_oppo_lm")
-                    dpg.add_line_series([], [], label="S - (L+M)", parent="plot_oppo_ay", tag="series_oppo_by")
-                dpg.add_spacer(height=6)
-                dpg.add_text("RGC spike raster (when Poisson spikes are enabled)")
-                dpg.add_text(
-                    "X: simulation time (s). Y: cell row (subsampled grid, six RGC maps stacked: "
-                    "midget L on/off, midget M on/off, parasol on/off).",
-                    wrap=SIDE_PANEL_TEXT_WRAP,
-                )
-                with dpg.group(tag="spike_raster_plot_group", show=state.config.spike_output.enabled):
-                    with dpg.plot(height=240, width=-1, tag="plot_rgc_raster"):
-                        dpg.add_plot_legend()
-                        dpg.add_plot_axis(dpg.mvXAxis, label="time (s)", tag="plot_raster_ax")
-                        dpg.add_plot_axis(dpg.mvYAxis, label="cell index", tag="plot_raster_ay")
-                        dpg.add_scatter_series(
-                            [],
-                            [],
-                            label="spikes",
-                            parent="plot_raster_ay",
-                            tag="series_rgc_raster",
-                        )
-            with dpg.tab(label="Export"):
-                dpg.add_text("Export data")
-                dpg.add_button(label="Save screenshot (PNG)", width=-1, tag="btn_export_png", callback=lambda: dpg.show_item("file_dialog_png"))
-                dpg.add_button(label="Save layer stats (CSV)", width=-1, tag="btn_export_csv", callback=lambda: dpg.show_item("file_dialog_csv"))
-                dpg.add_button(label="Save layer grids (.npy)", width=-1, tag="btn_export_npy", callback=lambda: dpg.show_item("file_dialog_npy"))
-            with dpg.tab(label="Recording"):
-                dpg.add_text("Capture frames while the sim runs (folder: session_meta.json + session.npz).")
-                dpg.add_checkbox(label="Record", tag="rec_enabled", default_value=False)
-                dpg.add_input_int(
-                    label="Spatial downsample stride",
-                    default_value=4,
-                    min_value=1,
-                    max_value=64,
-                    width=SIDE_SPIN_WIDTH,
-                    tag="rec_stride",
-                )
-                dpg.add_button(
-                    label="Save session to folder...",
-                    width=-1,
-                    callback=lambda: dpg.show_item("file_dialog_rec_save"),
-                )
-                dpg.add_button(
-                    label="Load session from folder...",
-                    width=-1,
-                    callback=lambda: dpg.show_item("file_dialog_rec_load"),
-                )
-                dpg.add_checkbox(
-                    label="Playback (pauses live simulation)",
-                    tag="rec_playback",
-                    default_value=False,
-                )
-                dpg.add_slider_int(
-                    label="Frame",
-                    tag="rec_frame_slider",
-                    min_value=0,
-                    max_value=0,
-                    default_value=0,
-                    width=SIDE_SLIDER_WIDTH,
-                    callback=lambda s, a: _apply_playback_frame(),
-                )
-                dpg.add_text("", tag="rec_status_text", wrap=SIDE_PANEL_TEXT_WRAP)
+def _sync_right_panel_plot_axes() -> None:
+    """Apply linear / log / symlog scales from right-panel checkboxes (after limits are set)."""
+    lin = dpg.mvPlotScale_Linear
+    log10 = dpg.mvPlotScale_Log10
+    symlog = getattr(dpg, "mvPlotScale_SymLog", lin)
+
+    def _cfg(tag: str, scale: int) -> None:
+        if dpg.does_item_exist(tag):
+            try:
+                dpg.configure_item(tag, scale=scale)
+            except Exception:
+                pass
+
+    spark_log_y = dpg.does_item_exist("plot_log_spark_y") and bool(dpg.get_value("plot_log_spark_y"))
+    hist_log_x = dpg.does_item_exist("plot_log_hist_x") and bool(dpg.get_value("plot_log_hist_x"))
+    hist_log_y = dpg.does_item_exist("plot_log_hist_y") and bool(dpg.get_value("plot_log_hist_y"))
+    cone_log_y = dpg.does_item_exist("plot_log_cone_y") and bool(dpg.get_value("plot_log_cone_y"))
+    oppo_symlog_y = dpg.does_item_exist("plot_log_oppo_y") and bool(dpg.get_value("plot_log_oppo_y"))
+
+    _cfg("spark_x", lin)
+    _cfg("spark_y", log10 if spark_log_y else lin)
+    _cfg("hist_x", log10 if hist_log_x else lin)
+    _cfg("hist_y", log10 if hist_log_y else lin)
+    _cfg("plot_cone_ax", lin)
+    _cfg("plot_cone_ay", log10 if cone_log_y else lin)
+    _cfg("plot_oppo_ax", lin)
+    _cfg("plot_oppo_ay", symlog if oppo_symlog_y else lin)
 
 
-def _build_center_viewport(display_width: int, display_height: int) -> None:
-    """Center panel: displays the simulation heatmap output."""
-    # Match padding around the centered image to RGB(16,16,16) — default ChildBg reads as black.
-    r, g, b = VIEWPORT_PANEL_BG_RGB_U8
-    with dpg.theme(tag=VIEWPORT_AREA_THEME_TAG):
-        with dpg.theme_component(dpg.mvChildWindow):
-            dpg.add_theme_color(dpg.mvThemeCol_ChildBg, (r, g, b, 255))
-            dpg.add_theme_color(dpg.mvThemeCol_WindowBg, (r, g, b, 255))
-    with dpg.child_window(border=True, width=-1, height=-1, tag=VIEWPORT_AREA_TAG):
-        with dpg.group(horizontal=False):
-            # Image tag so we can resize/center each frame; initial size placeholder
-            dpg.add_image(VIEWPORT_TEX_TAG, tag=VIEWPORT_IMAGE_TAG, width=400, height=400)
+def _update_rgc_dynamics_plots(state: SimState) -> None:
+    """
+    RGC mean-FR sparkline and spatial FR histogram: throttled by
+    ``RGC_DYNAMICS_UI_INTERVAL_S`` (wall clock) so plots do not refresh every frame.
+    """
+    if state.fr_midget_on_L is None:
+        return
+    now = time.perf_counter()
+    last = float(_shared.get("rgc_dynamics_last_wall_t", 0.0))
+    if last > 0.0 and (now - last) < RGC_DYNAMICS_UI_INTERVAL_S:
+        return
+    _shared["rgc_dynamics_last_wall_t"] = now
 
-    dpg.bind_item_theme(VIEWPORT_AREA_TAG, VIEWPORT_AREA_THEME_TAG)
+    mean_fr = _rgc_grid_mean_fr(state.fr_midget_on_L)
+    hist = _shared.get("rgc_fr_history", [])
+    hist.append(mean_fr)
+    hist = hist[-100:]
+    _shared["rgc_fr_history"] = hist
+
+    if hist and dpg.does_item_exist("sparkline_series"):
+        dt = RGC_DYNAMICS_UI_INTERVAL_S
+        xs = [i * dt for i in range(len(hist))]
+        dpg.set_value("sparkline_series", [xs, hist])
+        if dpg.does_item_exist("spark_x") and dpg.does_item_exist("spark_y"):
+            mn, mx = min(hist), max(hist)
+            pad = max((mx - mn) * 0.1, 1.0) if mx > mn else 1.0
+            t_hi = max(dt, (len(hist) - 1) * dt)
+            dpg.set_axis_limits("spark_x", 0.0, t_hi)
+            spark_log_y = dpg.does_item_exist("plot_log_spark_y") and bool(dpg.get_value("plot_log_spark_y"))
+            if spark_log_y:
+                if mx <= 0.0:
+                    dpg.set_axis_limits("spark_y", 1e-3, 1.0)
+                else:
+                    ymin = max(1e-6, mn) if mn > 0 else max(1e-6, mx * 1e-4)
+                    ymax = max(mx + pad, ymin * 1.01)
+                    dpg.set_axis_limits("spark_y", ymin, ymax)
+            else:
+                dpg.set_axis_limits("spark_y", max(0, mn - pad), mx + pad)
+
+    if dpg.does_item_exist("hist_series"):
+        hd = _rgc_fr_hist_plot_data(state.fr_midget_on_L, max_hist_points=2048)
+        if hd is not None:
+            xs, counts_list, hx_lo, hx_hi = hd
+            dpg.set_value("hist_series", [xs, counts_list])
+            if dpg.does_item_exist("hist_x") and dpg.does_item_exist("hist_y"):
+                hist_log_x = dpg.does_item_exist("plot_log_hist_x") and bool(dpg.get_value("plot_log_hist_x"))
+                if hist_log_x and hx_lo <= 0.0:
+                    span = max(hx_hi - hx_lo, 1e-9)
+                    hx_lo = max(1e-9, hx_hi - span * 0.999)
+                dpg.set_axis_limits("hist_x", hx_lo, hx_hi)
+                cmax = max(counts_list) if counts_list else 0.0
+                hist_log_y = dpg.does_item_exist("plot_log_hist_y") and bool(dpg.get_value("plot_log_hist_y"))
+                if hist_log_y:
+                    ymin = 0.5 if cmax > 0.0 else 0.1
+                    ymax = max(cmax * 1.15, ymin * 10.0, 1.0)
+                    dpg.set_axis_limits("hist_y", ymin, ymax)
+                else:
+                    dpg.set_axis_limits("hist_y", 0.0, max(1.0, cmax * 1.1))
+
+    _sync_right_panel_plot_axes()
 
 
 def _update_stats(state: SimState) -> None:
-    if state.fr_midget_on_L is not None:
-        mean_on = float(np.mean(state.fr_midget_on_L))
-        dpg.set_value("mean_fr_midget_on_L", f"Midget ON (L): {mean_on:5.1f} sp/s")
-    if state.fr_parasol_on is not None:
-        mean_parasol = float(np.mean(state.fr_parasol_on))
-        dpg.set_value("mean_fr_parasol_on", f"Parasol ON: {mean_parasol:5.1f} sp/s")
     if state.lm_opponent is not None:
         dpg.set_value("lm_summary", f"L-M: mean {float(np.mean(state.lm_opponent)):+.3f}")
     if state.by_opponent is not None:
@@ -1806,7 +1385,14 @@ def _update_stats(state: SimState) -> None:
         dpg.set_value("series_cone_bars", [[0, 1, 2], [mL, mM, mS]])
         ymax = max(1e-9, mL, mM, mS) * 1.15
         if dpg.does_item_exist("plot_cone_ay"):
-            dpg.set_axis_limits("plot_cone_ay", 0.0, ymax)
+            cone_log_y = dpg.does_item_exist("plot_log_cone_y") and bool(dpg.get_value("plot_log_cone_y"))
+            if cone_log_y:
+                pos_min = min(mL, mM, mS)
+                ymin = max(1e-12, pos_min * 0.5) if pos_min > 0 else max(1e-12, ymax * 1e-6)
+                ymax_adj = max(ymax, ymin * 10.0)
+                dpg.set_axis_limits("plot_cone_ay", ymin, ymax_adj)
+            else:
+                dpg.set_axis_limits("plot_cone_ay", 0.0, ymax)
         if dpg.does_item_exist("plot_cone_ax"):
             dpg.set_axis_limits("plot_cone_ax", -0.5, 2.5)
     oh = _shared.get("oppo_hist", [])
@@ -1834,65 +1420,51 @@ def _update_stats(state: SimState) -> None:
         "Horizontal": state.h_activation, "Bipolar": state.bp_diffuse_on,
         "Amacrine": state.amacrine_aii, "RGC": state.fr_midget_on_L,
     }
-    for name, arr in layer_data.items():
-        if arr is not None and dpg.does_item_exist(f"stat_layer_{name}"):
-            m, s, mn, mx = float(np.mean(arr)), float(np.std(arr)), float(np.min(arr)), float(np.max(arr))
-            dpg.set_value(f"stat_layer_{name}", f"{name}: mean={m:.3f} std={s:.3f} min={mn:.3f} max={mx:.3f}")
-    # RGC sparkline (last 100 ticks)
-    if state.fr_midget_on_L is not None:
-        hist = _shared.get("rgc_fr_history", [])
-        hist.append(float(np.mean(state.fr_midget_on_L)))
-        hist = hist[-100:]
-        _shared["rgc_fr_history"] = hist
-        if hist and dpg.does_item_exist("sparkline_series"):
-            xs = list(range(len(hist)))
-            dpg.set_value("sparkline_series", [xs, hist])
-            if dpg.does_item_exist("spark_x") and dpg.does_item_exist("spark_y"):
-                mn, mx = min(hist), max(hist)
-                pad = max((mx - mn) * 0.1, 1.0) if mx > mn else 1.0
-                dpg.set_axis_limits("spark_x", 0.0, max(1, len(hist) - 1))
-                dpg.set_axis_limits("spark_y", max(0, mn - pad), mx + pad)
-    # RGC histogram (throttled and subsampled to avoid slowdown when RGC is very active)
-    _shared["hist_update_tick"] = _shared.get("hist_update_tick", 0) + 1
-    if state.fr_midget_on_L is not None and dpg.does_item_exist("hist_series") and (_shared["hist_update_tick"] % 3 == 0):
-        flat = state.fr_midget_on_L.flatten()
+    for name in STAT_LAYER_PLOT_ORDER:
+        arr = layer_data.get(name)
+        if arr is None:
+            continue
+        slug = name.replace(" ", "_")
+        if not dpg.does_item_exist(f"stat_layer_series_{slug}_mean"):
+            continue
+        flat = np.asarray(arr, dtype=np.float64).ravel()
         flat = flat[np.isfinite(flat)]
-        max_hist_points = 2048
-        if len(flat) > max_hist_points:
-            step = len(flat) // max_hist_points
-            flat = flat[::step][:max_hist_points]
-        if len(flat) > 0:
-            mn, mx = float(np.min(flat)), float(np.max(flat))
-            if not np.isfinite(mn):
-                mn = 0.0
-            if not np.isfinite(mx):
-                mx = mn + 1.0
-            if mx <= mn:
-                mx = mn + 1.0
-                bins = 2
-            else:
-                # NumPy can raise "too many bins" when range is tiny (e.g. 1e-20)
-                min_range = max(1e-9, np.finfo(np.float64).tiny * 20)
-                if (mx - mn) < min_range:
-                    mx = mn + 1.0
-                    bins = 2
-                else:
-                    bins = 16
-            try:
-                counts, edges = np.histogram(flat, bins=bins, range=(mn, mx))
-            except ValueError:
-                # Fallback if NumPy still rejects (e.g. version-dependent)
-                bins = 2
-                mx = mn + 1.0
-                counts, edges = np.histogram(flat, bins=bins, range=(mn, mx))
-            xs = [(float(edges[i]) + float(edges[i + 1])) / 2 for i in range(bins)]
-            counts_list = [float(c) for c in counts]
-            dpg.set_value("hist_series", [xs, counts_list])
-            if dpg.does_item_exist("hist_x") and dpg.does_item_exist("hist_y"):
-                dpg.set_axis_limits("hist_x", float(edges[0]), float(edges[-1]))
-                dpg.set_axis_limits("hist_y", 0.0, max(1.0, float(np.max(counts)) * 1.1))
+        if flat.size == 0:
+            continue
+        m, s, mn, mx = (
+            float(np.mean(flat)),
+            float(np.std(flat)),
+            float(np.min(flat)),
+            float(np.max(flat)),
+        )
+        for xi, val, metric in zip(
+            range(4),
+            (m, s, mn, mx),
+            ("mean", "std", "min", "max"),
+        ):
+            t = f"stat_layer_series_{slug}_{metric}"
+            if dpg.does_item_exist(t):
+                dpg.set_value(t, [[float(xi)], [val]])
+        ay_tag = f"stat_layer_ay_{slug}"
+        ax_tag = f"stat_layer_ax_{slug}"
+        lo = min(m, s, mn, mx)
+        hi = max(m, s, mn, mx)
+        if not np.isfinite(lo) or not np.isfinite(hi):
+            continue
+        if hi <= lo:
+            pad = max(abs(lo) * 0.05, 0.05)
+            lo, hi = lo - pad, hi + pad
+        else:
+            pad = (hi - lo) * 0.12
+            lo, hi = lo - pad, hi + pad
+        if dpg.does_item_exist(ay_tag):
+            dpg.set_axis_limits(ay_tag, lo, hi)
+        if dpg.does_item_exist(ax_tag):
+            dpg.set_axis_limits(ax_tag, -0.5, 3.5)
+    # RGC sparkline + histogram: see _update_rgc_dynamics_plots (10 Hz wall clock).
+    # Spike raster: updated every frame in the main loop (not throttled with stats).
 
-    _update_spike_raster_series(state)
+    _sync_right_panel_plot_axes()
 
 
 def _resolve_ui_ttf_path() -> str | None:
@@ -1950,6 +1522,7 @@ def _tick_simulation(state: SimState, sim_dt: float) -> None:
         state.heterogeneity_dirty = False
         return
     tick(state, sim_dt)
+    _shared["last_sim_dt"] = float(sim_dt)
 
 
 def _sim_worker() -> None:
@@ -1992,6 +1565,7 @@ def _apply_playback_frame() -> None:
 
 def run_app() -> None:
     """Create the Dear PyGui + ModernGL app and start the main loop."""
+    user_prefs = user_settings.load()
     cfg = default_config()
     state = SimState(config=cfg)
     state.stimulus_params.update({
@@ -2017,21 +1591,21 @@ def run_app() -> None:
         state_back.config = state.config
 
     dpg.create_context()
+    _bind_global_ui_theme(str(user_prefs.get("active_theme_id", "dark_plus")))
 
     # Load modern font (Inter, SF Pro, Segoe UI, etc.) + smaller variant for left panel
     main_f, side_f = _load_app_fonts()
     _shared["app_font"] = main_f
     _shared["side_panel_font"] = side_f
 
-    # Texture registry: cap at MAX_DISPLAY_SIDE for large grids (block-average downsampling)
+    # Dynamic texture: large enough for sharp 2D All Layers + single-layer modes
     grid_h, grid_w = state.grid_shape()
-    display_w = min(MAX_DISPLAY_SIDE, grid_w * DISPLAY_SCALE)
-    display_h = min(MAX_DISPLAY_SIDE, grid_h * DISPLAY_SCALE)
+    display_w, display_h = _texture_target_hw(state)
 
     with dpg.texture_registry():
-        # Initialize with dark gray to avoid flashing on load
+        # Initialize with UI panel background (set in _bind_global_ui_theme)
         empty_tex = np.broadcast_to(
-            np.asarray(VIEWPORT_BG_RGBA, dtype=np.float32),
+            np.asarray(_ui_letterbox_rgba(), dtype=np.float32),
             (display_h, display_w, 4),
         ).copy()
         dpg.add_dynamic_texture(
@@ -2040,6 +1614,19 @@ def run_app() -> None:
             empty_tex.flatten(),
             tag=VIEWPORT_TEX_TAG,
         )
+
+    ctx = AppContext(sim_state=state, textures={"viewport": VIEWPORT_TEX_TAG}, shared=_shared)
+    _shared["display_w"] = display_w
+    _shared["display_h"] = display_h
+    try:
+        preset_data = gui_layout.load_preset_dict(
+            gui_layout.preset_path(str(user_prefs.get("active_preset", "default")))
+        )
+    except Exception:
+        preset_data = gui_layout.load_preset_dict(gui_layout.preset_path("default"))
+    composer = gui_layout.LayoutComposer(preset_data, ctx)
+    _shared["layout_composer"] = composer
+    _shared["last_export_dir"] = str(user_prefs.get("last_export_dir", str(Path.home())))
 
     with dpg.window(
         label="RGC Circuit Simulator",
@@ -2052,12 +1639,22 @@ def run_app() -> None:
         no_scrollbar=True,
     ):
         _build_menu_bar()
+        composer.ensure_shell("main_window")
+        composer.mount_panels()
 
-        # Three-column layout: left panel, center viewport, right panel.
-        with dpg.group(horizontal=True):
-            _build_left_panel(state)
-            _build_center_viewport(display_w, display_h)
-            _build_right_panel(state)
+    if dpg.does_item_exist(VIEWPORT_AREA_TAG):
+        tp0 = gui_themes.theme_json_path(str(user_prefs.get("active_theme_id", "dark_plus")))
+        if not tp0.is_file():
+            tp0 = gui_themes.theme_json_path("dark_plus")
+        _refresh_viewport_chrome_theme_from_tokens(gui_themes.load_theme(tp0))
+        with dpg.handler_registry(tag=VIEWPORT_ZOOM_WHEEL_REG):
+            dpg.add_mouse_wheel_handler(callback=_on_viewport_mouse_wheel)
+
+    if dpg.does_item_exist("layout_preset_combo"):
+        dpg.set_value("layout_preset_combo", str(user_prefs.get("active_preset", "default")))
+    if dpg.does_item_exist("color_theme_combo"):
+        dpg.set_value("color_theme_combo", str(user_prefs.get("active_theme_id", "dark_plus")))
+    _shared["active_theme_id"] = str(user_prefs.get("active_theme_id", "dark_plus"))
 
     _update_stimulus_visibility("spot")  # initial visibility for default type
     _update_view_mode_ui("2D Heatmap")
@@ -2069,10 +1666,12 @@ def run_app() -> None:
         dpg.bind_item_font("main_window", app_font)
     side_font = _shared.get("side_panel_font")
     if side_font is not None:
-        if dpg.does_item_exist("left_panel_root"):
-            dpg.bind_item_font("left_panel_root", side_font)
-        if dpg.does_item_exist("right_panel_root"):
-            dpg.bind_item_font("right_panel_root", side_font)
+        if dpg.does_item_exist("slot_left_stack"):
+            dpg.bind_item_font("slot_left_stack", side_font)
+        if dpg.does_item_exist(LEFT_STACK_SCROLL_TAG):
+            dpg.bind_item_font(LEFT_STACK_SCROLL_TAG, side_font)
+        if dpg.does_item_exist("slot_right_stack"):
+            dpg.bind_item_font("slot_right_stack", side_font)
 
     # About window (hidden by default)
     with dpg.window(label="About", modal=True, show=False, tag="about_window"):
@@ -2086,7 +1685,7 @@ def run_app() -> None:
         title="RGC Circuit Simulator",
         width=WINDOW_SIZE[0],
         height=WINDOW_SIZE[1],
-        min_width=MIN_WINDOW_SIZE[0],
+        min_width=composer.min_viewport_client_width(),
         min_height=MIN_WINDOW_SIZE[1],
     )
     dpg.setup_dearpygui()
@@ -2115,6 +1714,7 @@ def run_app() -> None:
         path = app_data.get("file_path_name")
         if path and _shared.get("last_frame") is not None:
             export_screenshot_png(_shared["last_frame"], Path(path))
+            _shared["last_export_dir"] = str(Path(path).parent)
 
     def _on_csv(sender, app_data):
         path = app_data.get("file_path_name")
@@ -2122,6 +1722,7 @@ def run_app() -> None:
             st = _shared.get("state_front") or _shared.get("state")
             if st is not None:
                 export_layer_grids_csv(st, Path(path))
+                _shared["last_export_dir"] = str(Path(path).parent)
 
     def _on_npy(sender, app_data):
         # Directory selector: file_path_name or current_path
@@ -2132,6 +1733,7 @@ def run_app() -> None:
             st = _shared.get("state_front") or _shared.get("state")
             if st is not None:
                 export_layer_grids_npy(st, Path(path))
+                _shared["last_export_dir"] = str(Path(path))
 
     def _on_stim_image(sender, app_data):
         """Load an external image/photo as a stimulus mask."""
@@ -2151,12 +1753,10 @@ def run_app() -> None:
             arr = np.asarray(img, dtype=np.float32)
             # Store in 0–1 so spectral construction can preserve RGB ratios.
             st.stimulus_params["image_mask"] = (arr / 255.0).astype(np.float32)
-            # Must use stimulus type "image" or the pipeline keeps the previous
-            # stimulus (e.g. spot) and ignores image_mask.
-            st.stimulus_params["type"] = "image"
+            apply_stimulus_type_change(st, "image")
             if dpg.does_item_exist("stimulus_type_combo"):
                 dpg.set_value("stimulus_type_combo", "image")
-            _update_stimulus_visibility("image", st)
+            _shared["last_export_dir"] = str(Path(path).parent)
         except Exception as e:
             # Fallback: simple stderr print so the app keeps running.
             print(f"Failed to load stimulus image: {e}")
@@ -2172,6 +1772,7 @@ def run_app() -> None:
             return
         try:
             buf.save(Path(path))
+            _shared["last_export_dir"] = str(Path(path).parent)
             if dpg.does_item_exist("rec_status_text"):
                 dpg.set_value("rec_status_text", f"Saved to {path}")
         except OSError as e:
@@ -2185,6 +1786,7 @@ def run_app() -> None:
             return
         try:
             loaded = load_session_recording(Path(path))
+            _shared["last_export_dir"] = str(Path(path).parent)
             _shared["loaded_recording"] = loaded
             n = loaded.n_frames
             if dpg.does_item_exist("rec_frame_slider"):
@@ -2196,6 +1798,7 @@ def run_app() -> None:
         except OSError as e:
             print(f"Session load failed: {e}")
 
+    _export_default = str(_shared.get("last_export_dir", str(Path.home())))
     with dpg.file_dialog(
         callback=_on_png,
         tag="file_dialog_png",
@@ -2203,6 +1806,7 @@ def run_app() -> None:
         modal=True,
         directory_selector=False,
         height=520,
+        default_path=_export_default,
     ):
         dpg.add_file_extension(".*")
         dpg.add_file_extension(".png", color=(0, 255, 0, 255))
@@ -2214,6 +1818,7 @@ def run_app() -> None:
         modal=True,
         directory_selector=False,
         height=520,
+        default_path=_export_default,
     ):
         dpg.add_file_extension(".*")
         dpg.add_file_extension(".csv", color=(0, 255, 0, 255))
@@ -2225,6 +1830,7 @@ def run_app() -> None:
         modal=True,
         directory_selector=True,
         height=520,
+        default_path=_export_default,
     ):
         pass
 
@@ -2235,6 +1841,7 @@ def run_app() -> None:
         modal=True,
         directory_selector=False,
         height=520,
+        default_path=_export_default,
     ):
         dpg.add_file_extension(".png", color=(0, 255, 0, 255))
         dpg.add_file_extension(".jpg")
@@ -2248,6 +1855,7 @@ def run_app() -> None:
         modal=True,
         directory_selector=True,
         height=520,
+        default_path=_export_default,
     ):
         pass
 
@@ -2258,6 +1866,7 @@ def run_app() -> None:
         modal=True,
         directory_selector=True,
         height=520,
+        default_path=_export_default,
     ):
         pass
 
@@ -2272,13 +1881,18 @@ def run_app() -> None:
     _shared["connectivity_dirty"] = False
     _shared["frame_count"] = 0  # for deferred resize at startup
     _shared["rgc_fr_history"] = []  # for sparkline (last 100 ticks)
-    _shared["stats_tick"] = 0  # throttle stats update
+    _shared["stats_tick"] = 0
     _shared["all_layers_rgba"] = None  # composite canvas for 2D All Layers view
     _shared["rec_buffer"] = SessionRecordingBuffer()
     _shared["loaded_recording"] = None
     _shared["rec_prev_enabled"] = False
     _shared["playback_active"] = False
     _shared["raster_events"] = deque()
+    _shared["last_sim_dt"] = 1.0 / 60.0
+    _shared["viewport_zoom"] = 1.0
+    _shared["viewport_pan_px"] = [0.0, 0.0]
+    _shared["viewport_pan_dragging"] = False
+    _shared["_vp_pan_prev_mouse"] = None
 
     if not SIM_ON_MAIN_THREAD and state_back is not None:
         threading.Thread(target=_sim_worker, daemon=True).start()
@@ -2305,15 +1919,47 @@ def run_app() -> None:
                 dpg.configure_viewport(0, width=WINDOW_SIZE[0], height=WINDOW_SIZE[1])
                 vw, vh = WINDOW_SIZE[0], WINDOW_SIZE[1]
             dpg.configure_item("main_window", width=vw, height=vh)
-            # Pin center width; reserve pixels for borders/spacing so no horizontal scroll
-            slack = 32  # borders and gaps between panels
-            center_w = max(
-                MIN_VIEWPORT_WIDTH,
-                vw - LEFT_PANEL_WIDTH - RIGHT_PANEL_WIDTH - slack,
-            )
-            dpg.configure_item(VIEWPORT_AREA_TAG, width=center_w)
 
-            # Size and center the image in the middle panel (max space, centered)
+            view_mode = (
+                str(dpg.get_value("view_mode_combo"))
+                if dpg.does_item_exist("view_mode_combo")
+                else "2D Heatmap"
+            )
+            base_lw, base_rw = _base_panel_widths_from_preset()
+            tex_w = int(_shared.get("display_w", 800))
+            tex_h = int(_shared.get("display_h", 600))
+            state_layout = _shared.get("state_front")
+            if view_mode == "2D All Layers" and state_layout is not None:
+                gh, gw = state_layout.grid_shape()
+                comp_h, comp_w = gui_layout.composite_pixel_size(gh, gw)
+                try:
+                    r0 = dpg.get_item_rect_min(VIEWPORT_AREA_TAG)
+                    r1 = dpg.get_item_rect_max(VIEWPORT_AREA_TAG)
+                    area_h = float(max(240, int(r1[1] - r0[1])))
+                except Exception:
+                    area_h = max(320.0, float(vh) * 0.82)
+                lw, rw, _ = gui_layout.side_widths_for_all_layers_margin(
+                    vw,
+                    tex_w=tex_w,
+                    tex_h=tex_h,
+                    comp_h=comp_h,
+                    comp_w=comp_w,
+                    base_lw=base_lw,
+                    base_rw=base_rw,
+                    min_viewport_w=MIN_VIEWPORT_WIDTH,
+                    area_h=area_h,
+                    margin_px=float(ALL_LAYERS_VIEWER_MARGIN_PX),
+                )
+            else:
+                lw, rw = base_lw, base_rw
+            _shared["left_panel_width"] = lw
+            _shared["right_panel_width"] = rw
+            _apply_side_panel_widths_to_ui(lw, rw)
+
+            gui_layout.apply_center_width_from_viewport(vw, vh, _shared)
+
+            # Size and center the image in the middle panel (max space, centered);
+            # wheel zoom + Shift+left-drag pan (clamped so the image stays in view).
             if dpg.does_item_exist(VIEWPORT_IMAGE_TAG):
                 try:
                     rect_min = dpg.get_item_rect_min(VIEWPORT_AREA_TAG)
@@ -2321,12 +1967,31 @@ def run_app() -> None:
                     area_w = max(1, int(rect_max[0] - rect_min[0]))
                     area_h = max(1, int(rect_max[1] - rect_min[1]))
                 except Exception:
-                    area_w, area_h = center_w, vh - 60  # fallback
-                scale = min(area_w / max(display_w, 1), area_h / max(display_h, 1))
+                    lw_fb = int(_shared.get("left_panel_width", LEFT_PANEL_WIDTH))
+                    rw_fb = int(_shared.get("right_panel_width", RIGHT_PANEL_WIDTH))
+                    area_w = max(MIN_VIEWPORT_WIDTH, vw - lw_fb - rw_fb - 32)
+                    area_h = max(1, vh - 60)
+                _viewport_shift_pan_tick()
+                base_scale = min(area_w / max(display_w, 1), area_h / max(display_h, 1))
+                zoom = max(
+                    VIEWPORT_ZOOM_MIN,
+                    min(VIEWPORT_ZOOM_MAX, float(_shared.get("viewport_zoom", 1.0))),
+                )
+                scale = base_scale * zoom
                 img_w = int(display_w * scale)
                 img_h = int(display_h * scale)
-                pos_x = max(0, (area_w - img_w) // 2)
-                pos_y = max(0, (area_h - img_h) // 2)
+                base_x = max(0, (area_w - img_w) // 2)
+                base_y = max(0, (area_h - img_h) // 2)
+                min_px = min(0, area_w - img_w)
+                max_px = max(0, area_w - img_w)
+                min_py = min(0, area_h - img_h)
+                max_py = max(0, area_h - img_h)
+                pan = _shared.get("viewport_pan_px", [0.0, 0.0])
+                pan_x = float(pan[0]) if len(pan) > 0 else 0.0
+                pan_y = float(pan[1]) if len(pan) > 1 else 0.0
+                pos_x = int(max(min_px, min(max_px, base_x + pan_x)))
+                pos_y = int(max(min_py, min(max_py, base_y + pan_y)))
+                _shared["viewport_pan_px"] = [float(pos_x - base_x), float(pos_y - base_y)]
                 dpg.configure_item(
                     VIEWPORT_IMAGE_TAG,
                     width=img_w,
@@ -2378,14 +2043,13 @@ def run_app() -> None:
 
         # Render: 2D view modes share the same dynamic texture.
         view_mode = dpg.get_value("view_mode_combo") if dpg.does_item_exist("view_mode_combo") else "2D Heatmap"
+        ui_bg = _ui_letterbox_rgba()
         if view_mode == "2D All Layers":
             # No layer-specific overlays or convergence notes in composite mode.
             if dpg.does_item_exist("layer_convergence_note"):
                 dpg.set_value("layer_convergence_note", "")
             comp_rgba = _render_all_layers_composite(state)
-            rgba = _resize_rgba_to_display(
-                comp_rgba, display_h, display_w, ALL_LAYERS_BG_RGBA
-            )
+            rgba = _resize_rgba_to_display(comp_rgba, display_h, display_w, ui_bg)
         else:
             # 2D single-layer heatmap: combo value is display label; resolve to internal key.
             layer_display = dpg.get_value("layer_combo") if dpg.does_item_exist("layer_combo") else LAYER_KEY_TO_DISPLAY.get("RGC Firing (L)", "RGC Firing (L)")
@@ -2428,16 +2092,20 @@ def run_app() -> None:
                 rgba = block_average_downsample_rgba(rgba, MAX_DISPLAY_SIDE)
             else:
                 rgba = np.repeat(np.repeat(rgba, DISPLAY_SCALE, axis=0), DISPLAY_SCALE, axis=1)
+            rgba = _resize_rgba_to_display(rgba, display_h, display_w, ui_bg)
 
         tex_data = np.ascontiguousarray(rgba.astype(np.float32)).flatten()
         img = (rgba * 255).astype(np.uint8)
 
         _shared["last_frame"] = img
         dpg.set_value(VIEWPORT_TEX_TAG, tex_data)
-        # Update stats every 5th frame to reduce CPU (sparkline, histogram are costly)
+        # RGC Dynamics: mean-FR trace + histogram (10 Hz wall clock).
+        _update_rgc_dynamics_plots(state)
+        # Spike raster: every frame so ticks align with simulation time (not stats cadence).
+        _update_spike_raster_series(state)
         st = _shared.get("stats_tick", 0)
         _shared["stats_tick"] = st + 1
-        if st % 5 == 0:
+        if st % _STATS_UI_EVERY_N_FRAMES == 0:
             _update_stats(state)
 
         dpg.render_dearpygui_frame()
@@ -2448,5 +2116,15 @@ def run_app() -> None:
         if sleep_time > 0.001:
             time.sleep(sleep_time)
 
+    save_prefs: dict[str, object] = {
+        "active_theme_id": str(_shared.get("active_theme_id", user_prefs.get("active_theme_id", "dark_plus"))),
+        "active_preset": str(
+            dpg.get_value("layout_preset_combo")
+            if dpg.does_item_exist("layout_preset_combo")
+            else user_prefs.get("active_preset", "default")
+        ),
+        "last_export_dir": str(_shared.get("last_export_dir", user_prefs.get("last_export_dir", str(Path.home())))),
+    }
+    user_settings.save(save_prefs)
     dpg.destroy_context()
 

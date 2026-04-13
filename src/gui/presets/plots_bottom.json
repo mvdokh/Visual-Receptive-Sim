@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "preset": "plots_bottom",
+  "left_width": 384,
+  "right_width": 320,
+  "slots": {
+    "left_stack": ["panel_circuit", "panel_heterogeneity"],
+    "center": ["panel_viewport"],
+    "right_stack": [],
+    "bottom": ["panel_stats_plots"]
+  }
+}

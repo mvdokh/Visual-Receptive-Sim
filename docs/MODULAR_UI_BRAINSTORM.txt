@@ -1,0 +1,206 @@
+Modular UI and theming brainstorm — RGC Circuit Simulator
+==========================================================
+Date: 2026-04-12 (living document; revise as the architecture evolves)
+
+Purpose
+-------
+This note captures ideas for making the Dear PyGui app more modular: draggable /
+rearrangeable panels (IDE-style layout) and user-selectable color themes (VS Code–style).
+It is a design brainstorm, not a commitment or task list.
+
+----------------------------------------------------------------------
+1. What “modular” can mean here
+----------------------------------------------------------------------
+
+A. Layout modularity (spatial)
+   - Break the monolithic left / center / right columns into named “panels” or
+     “modules”: e.g. Stimulus, Circuit tuning, Spatial heterogeneity, Viewport,
+     Stats, Plots, Recording, Raster, etc.
+   - Each module is a self-contained subtree (Dear PyGui items under one root
+     group or child_window) with a stable tag id.
+   - Users can move modules between “dock regions” (left, right, bottom, tab
+     stack, floating window) or reorder tabs.
+
+B. Logical modularity (code)
+   - One Python module per panel: build function + optional callbacks + small
+     state object. `app.py` becomes composition + wiring (theme, layout engine,
+     sim loop) instead of 2000+ lines of widgets.
+   - Shared services: `SimState`, texture tags, `_shared` dict or a small
+     `AppContext` dataclass passed into panels.
+
+C. Data / persistence modularity
+   - Save and restore: window geometry, dock positions, collapsed tree nodes,
+     selected theme id, last-used paths for export dialogs.
+
+----------------------------------------------------------------------
+2. Dear PyGui realities (constraints and levers)
+----------------------------------------------------------------------
+
+Strengths
+   - `dpg.child_window`, `dpg.group`, `dpg.tab_bar` / `dpg.tab` already give
+     nested structure.
+   - Themes: `dpg.theme`, `dpg.add_theme_color`, `dpg.add_theme_style`,
+     `dpg.bind_item_theme` — good for global and per-widget styling.
+   - Tags everywhere: you can `dpg.move_item(panel_id, parent=new_parent)` in
+     theory to reparent UI subtrees (verify version behavior and redraw).
+
+Limitations / research items
+   - True “IDE docking” (splitters, drag-drop between arbitrary drop zones) is
+     not a single built-in widget; you implement it with:
+       * manual drag callbacks (`mvMouseButton_Left` + item hit testing), or
+       * a grid of resizable child_windows with fixed policy, or
+       * third-party patterns from the Dear PyGui community / examples.
+   - Performance: moving large subtrees every frame is expensive; layout
+     changes should happen on drag-end or on “apply layout” button.
+   - macOS / GLFW: focus and HiDPI quirks; test after any major layout refactor.
+
+----------------------------------------------------------------------
+3. Layout architecture directions
+----------------------------------------------------------------------
+
+3.1 Phased approach (recommended)
+
+   Phase 0 — Tag registry and panel roots (low risk)
+   - Assign one root tag per logical panel (e.g. `panel_left_controls`,
+     `panel_viewport`, `panel_right_tabs`).
+   - Move existing `_build_*` code to `src/gui/panels/*.py` without changing
+     behavior; `app.py` only composes.
+
+   Phase 1 — Preset layouts (no drag yet)
+   - JSON or TOML: `{ "preset": "default" | "wide_viewport" | "plots_bottom" }`
+   - Loader creates the same widgets but different parent hierarchy (e.g.
+     Plots tab content promoted to a bottom `child_window`).
+
+   Phase 2 — Tab consolidation and detach
+   - Merge Stats / Plots / Recording into one tab bar that can host “floating”
+     secondary windows: `dpg.window` with `no_resize=False`, user drags window.
+   - “Pop out panel” button: `dpg.move_item(panel_root, parent=floating_window)`.
+
+   Phase 3 — Full docking (higher effort)
+   - Define a small set of drop targets (Left column stack, Right column stack,
+     Bottom band, Center only for viewport).
+   - On drag-end: reparent panel root to the drop target’s `group`.
+   - Optional: persist layout JSON keyed by drop target id + order index.
+
+3.2 Data model for saved layout (sketch)
+
+   {
+     "version": 1,
+     "preset": "custom",
+     "slots": {
+       "left_stack": ["panel_stimulus", "panel_circuit", "panel_heterogeneity"],
+       "right_stack": ["panel_stats_plots", "panel_recording"],
+       "bottom": ["panel_raster"],
+       "center": ["panel_viewport"]
+     },
+     "floating": [
+       {"panel": "panel_recording", "x": 100, "y": 100, "w": 400, "h": 500}
+     ]
+   }
+
+   - “panel_*” strings map to known tag roots.
+   - Unknown ids in file → ignore or map to default slot (migration).
+
+3.3 Viewport special case
+   - Keep the simulation texture in a dedicated center region with minimum size
+     constraints so the sim never becomes unusable.
+   - Raster plot could default to bottom or right tab; power users move it.
+
+----------------------------------------------------------------------
+4. Theme system (VS Code–style)
+----------------------------------------------------------------------
+
+4.1 Theme as data, not scattered literals
+
+   - Define a `ThemeTokens` structure (dataclass or dict schema):
+       * window_bg, child_bg, text, text_disabled
+       * button, frame_bg, border, separator
+       * plot_bg, plot_axis, plot_line (and per-series overrides if needed)
+       * heatmap_chrome (optional; simulation colormaps stay separate)
+   - Ship several JSON / Python theme files:
+       * Dark+ (default), Light, High Contrast, “Paper” (print-friendly), etc.
+
+4.2 Application flow
+
+   - Startup: load `user_settings.json` → `active_theme_id` → build `dpg.theme`
+     from tokens → `dpg.bind_theme(global_theme)`.
+   - Settings UI: combo “Color theme” + optional “Reload from disk” for dev.
+   - Re-bind on change: walk registered item tags and `dpg.bind_item_theme` for
+     categories (plots vs side panels vs menus) if you need finer control than
+     one global theme.
+
+4.3 Simulation vs chrome
+
+   - Keep a clear boundary: **UI chrome** follows VS Code–like themes; **layer
+     heatmaps** keep scientific colormaps (firing, spectral, etc.) unless the
+     user explicitly asks for “UI theme affects heatmap background only.”
+
+4.4 Fonts
+   - Theme bundle may reference font size / path; respect bundled DejaVu or
+     user-selected font in settings (optional second phase).
+
+----------------------------------------------------------------------
+5. Modularity beyond layout and color
+----------------------------------------------------------------------
+
+   - **Plugin-style panels**: optional third-party or experimental panels
+     register into a dict `{ "id": build_fn }` if they expose the same small
+     interface (build(parent_ctx) -> root_tag).
+   - **Feature flags**: environment variables or `config.json` to hide heavy
+     panels (3D, raster) on low-end machines.
+   - **Headless / scripting**: same `SimState` + `tick()` without any DPG
+     import for batch runs; GUI becomes one “front end” of several.
+
+----------------------------------------------------------------------
+6. Migration strategy from current `app.py`
+----------------------------------------------------------------------
+
+   1. Extract `_build_left_panel`, `_build_right_panel`, viewport, menus into
+      `src/gui/panels/` without behavior change.
+   2. Introduce `LayoutComposer` class that takes a layout dict and returns
+      nothing but wires parents/tags.
+   3. Add `user_settings.json` (theme + last preset only).
+   4. Add preset switcher in Help or Settings menu.
+   5. Later: drag-drop or “Move to…” submenu per panel.
+
+----------------------------------------------------------------------
+7. Risks and mitigations
+----------------------------------------------------------------------
+
+   - Risk: Layout bugs after reparenting (missing textures, wrong order).
+     Mitigation: integration test that imports GUI and asserts critical tags
+     exist; optional screenshot diff later.
+   - Risk: Theme incomplete (unstyled widgets flash default).
+     Mitigation: theme “coverage checklist” per widget type; fall back to parent
+     theme colors.
+   - Risk: Performance with 200k raster points + heavy theme rebinding.
+     Mitigation: throttle rebinding; don’t rebuild entire tree on theme change
+     if you can `configure_item` colors only.
+
+----------------------------------------------------------------------
+8. Alternative long-term stacks (only if DPG limits bite hard)
+----------------------------------------------------------------------
+
+   - Qt (PySide6) + QDockWidget: native docking, mature, heavier dependency.
+   - Electron + Python backend: maximum UI flexibility, much larger footprint.
+   - Dear ImGui directly (C++/pybind): more control, more engineering cost.
+
+   For this project, staying on Dear PyGui and incrementally adding presets +
+   themes + optional float windows is likely the best cost/benefit unless
+   docking requirements become extreme.
+
+----------------------------------------------------------------------
+9. Short summary
+----------------------------------------------------------------------
+
+   Modular layout: treat each major UI block as a tagged panel, move build
+   code into panel modules, add layout presets first, then reparent / float
+   windows, then richer docking if needed.
+
+   Modular themes: token-based theme files + global bind + settings combo,
+   separate from scientific heatmap colormaps.
+
+   Modular codebase: thin `app.py` orchestrator, `panels/` + optional
+   `layout.py` + `themes.py` + persisted JSON for user preferences.
+
+End of document.
